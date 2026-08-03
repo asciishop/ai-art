@@ -1,0 +1,60 @@
+@startuml plataforma-personajes
+title Plataforma de personajes artificiales - Diagrama de componentes
+
+skinparam componentStyle rectangle
+skinparam shadowing false
+skinparam defaultTextAlignment center
+
+package "AUTORIA (por personaje)" #FDF6E3 {
+  artifact "character_spec.md\n(la biblia)" as SPEC
+  artifact "system_prompt.md\n(identidad)" as SYS
+  artifact "memory/*.md\n(su mundo)" as MEM
+  artifact "conversations/*.json\n(como habla)" as CONV
+}
+
+package "PREPARACION (tools/)" #E3F2FD {
+  component "build_dataset.py" as BUILD
+  component "ingest.py" as INGEST
+  component "train.py\n(GPU - RunPod)" as TRAIN
+  artifact  "dataset.jsonl" as DATASET
+  artifact  "adapter/\n(LoRA = voz)" as ADAPTER
+}
+
+component "personajes.yaml\n+ registro.py\n(REGISTRO CENTRAL)" as REG #FFF3CD
+
+package "RUNTIME (pod RunPod)" #E8F5E9 {
+  component "web/index.html\n(interfaz chat)" as WEB
+  component "backend/main.py\n(FastAPI - :3000)" as BACK
+  component "backend/memoria.py\n(memoria que escribe)" as MEMO
+  component "vLLM\n(base + LoRAs - :8000)" as VLLM
+  database  "ChromaDB\ncanon + _exp" as CHROMA
+  database  "SQLite\narchivo.db" as SQLITE
+}
+
+actor "visitante" as USER
+
+SPEC ..> SYS : guia
+SPEC ..> MEM : guia
+SPEC ..> CONV : guia
+
+CONV --> BUILD
+BUILD --> DATASET
+DATASET --> TRAIN
+TRAIN --> ADAPTER
+MEM --> INGEST
+INGEST --> CHROMA : indexa canon
+ADAPTER --> VLLM : carga como LoRA
+
+REG --> BACK : que LoRA / coleccion / prompt
+SYS --> BACK : identidad
+
+USER <--> WEB : HTTP :3000
+WEB <--> BACK : /api/chat (SSE)
+BACK --> VLLM : prompt + LoRA elegido
+BACK --> CHROMA : RAG (canon + experiencias)
+BACK --> MEMO : al terminar el turno
+MEMO --> SQLITE : archiva crudo
+MEMO --> VLLM : destila (modelo base)
+MEMO --> CHROMA : guarda recuerdo
+
+@enduml

@@ -1,0 +1,46 @@
+@startuml secuencia-conversacion
+title Flujo de una conversacion entre componentes
+
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+
+actor "Visitante" as USER
+participant "Web\n(index.html)" as WEB
+participant "Backend\n(main.py)" as BACK
+database "ChromaDB\n(canon + _exp)" as CHROMA
+participant "vLLM\n(base + LoRAs)" as VLLM
+participant "Memoria\n(memoria.py)" as MEMO
+database "SQLite\n(archivo.db)" as SQLITE
+
+== El visitante habla ==
+USER -> WEB : escribe un mensaje
+WEB -> BACK : POST /api/chat\n{personaje, mensaje, historial}
+
+== El backend prepara el turno ==
+BACK -> BACK : registro -> LoRA, coleccion,\nsystem prompt del personaje
+BACK -> CHROMA : buscar contexto\n(canon + experiencias)
+CHROMA --> BACK : fragmentos relevantes
+BACK -> BACK : arma el prompt\n(identidad + contexto + mensaje)
+
+== vLLM responde en streaming ==
+BACK -> VLLM : /v1/chat/completions\n(model = LoRA del personaje, stream)
+loop por cada token
+    VLLM --> BACK : token
+    BACK --> WEB : SSE data: {token}
+    WEB --> USER : va apareciendo la respuesta
+end
+VLLM --> BACK : [DONE]
+BACK --> WEB : SSE [DONE]
+
+== La obra recuerda (en segundo plano) ==
+BACK ->> MEMO : recordar(pregunta, respuesta)
+activate MEMO
+MEMO -> SQLITE : archivar intercambio crudo
+MEMO -> VLLM : destilar\n(modelo base -> 1 recuerdo)
+VLLM --> MEMO : recuerdo (o "NADA")
+alt hay recuerdo y no es duplicado
+    MEMO -> CHROMA : guardar en _exp del personaje
+end
+deactivate MEMO
+
+@enduml

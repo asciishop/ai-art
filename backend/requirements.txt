@@ -1,0 +1,9 @@
+# Backend de la plataforma (corre en el pod, CPU basta para esto)
+fastapi>=0.110
+uvicorn[standard]>=0.29
+httpx>=0.27
+pydantic>=2.0
+pyyaml>=6.0
+chromadb>=0.5.0
+sentence-transformers>=3.0.0
+# vLLM se instala aparte en el pod (necesita la GPU): pip install vllm

@@ -1,0 +1,78 @@
+# ============================================================
+#  REGISTRO CENTRAL DE PERSONAJES
+# ============================================================
+# Esta es la ÚNICA fuente de verdad de la plataforma. Todo lo demás deriva de
+# aquí: el backend sabe qué LoRA de texto usar, qué colección RAG consultar, qué
+# System Prompt cargar y qué LoRA de imagen aplicar — todo mirando este archivo.
+#
+# AÑADIR UN PERSONAJE = añadir un bloque aquí + su carpeta en personajes/.
+# No se toca ningún otro archivo de arquitectura.
+#
+# Reglas:
+#  - Los tres 'lora_texto' se entrenan sobre EL MISMO modelo base (ver
+#    modelo_base). Es requisito del multi-LoRA de vLLM.
+#  - 'coleccion' debe ser única por personaje: aísla su memoria del resto.
+#  - 'trigger' es la palabra que invoca su estilo visual en ComfyUI; debe ser la
+#    misma con la que se etiquetaron sus imágenes de entrenamiento.
+
+modelo_base: "Qwen/Qwen2.5-3B-Instruct"   # base común de los 3 LoRAs de texto
+modelo_imagen: "SDXL"                       # base común de los 3 LoRAs de estilo
+
+personajes:
+
+  va91:
+    nombre: "VA 91 — el Buda Eléctrico"
+    activo: true
+    # --- CHAT (texto) ---
+    lora_texto:  "va91-text"                        # nombre del adaptador en vLLM
+    adapter:     "personajes/va91/adapter"          # ruta al safetensors entrenado
+    system_prompt: "personajes/va91/system_prompt.md"
+    coleccion:   "va91_mem"                          # colección RAG (aislada)
+    memory:      "personajes/va91/memory"
+    # --- IMAGEN (postales) ---
+    lora_imagen: "va91-style.safetensors"           # LoRA SDXL en ComfyUI/models/loras
+    trigger:     "va91style"                         # palabra que invoca el estilo
+    # --- VOZ (ElevenLabs) ---
+    voz_pitch: 0.8                                   # grave y sereno (buda eléctrico)
+    voz_rate:  0.9
+    # --- interfaz ---
+    saludo: "Tu señal llegó a los 3005. Te escucho."
+    color:  "#5B8BF0"
+
+  zinc:
+    nombre: "Zinc — el Guardián de la Memoria de los Metales"
+    activo: true                                    # el backend lo oculta hasta activarlo
+    # --- CHAT (texto) ---
+    lora_texto:  "zinc-text"                         # nombre del adaptador en vLLM
+    adapter:     "personajes/zinc/adapter"           # ruta al safetensors entrenado
+    system_prompt: "personajes/zinc/system_prompt.md"
+    coleccion:   "zinc_mem"                          # colección RAG (aislada)
+    memory:      "personajes/zinc/memory"
+    # --- IMAGEN (postales) ---
+    lora_imagen: "zinc-style.safetensors"            # LoRA SDXL en ComfyUI/models/loras
+    trigger:     "zincstyle"                         # palabra que invoca el estilo
+    # --- VOZ (ElevenLabs) ---
+    voz_pitch: 0.7                                   # muy grave, metálico
+    voz_rate:  0.95
+    # --- interfaz ---
+    saludo: "Percibo el eco del metal que habita en tu mundo. Bienvenido, constructor."
+    color:  "#8A9BA8"
+
+  ucron:
+    nombre: "Ucron — el Guardián del Imaginario Basura"
+    activo: true
+    # --- CHAT (texto) ---
+    lora_texto:  "ucron-text"
+    adapter:     "personajes/ucron/adapter"
+    system_prompt: "personajes/ucron/system_prompt.md"
+    coleccion:   "ucron_mem"
+    memory:      "personajes/ucron/memory"
+    # --- IMAGEN (postales) ---
+    lora_imagen: "ucron-style.safetensors"
+    trigger:     "ucronstyle"
+    # --- VOZ (ElevenLabs) ---
+    voz_pitch: 1.1                                   # algo más agudo, etéreo
+    voz_rate:  1.0
+    # --- interfaz ---
+    saludo: "Has llegado al lugar donde descansan las posibilidades olvidadas. Bienvenido, soñador."
+    color:  "#7B6FD4"
