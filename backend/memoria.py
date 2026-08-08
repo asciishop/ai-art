@@ -121,18 +121,23 @@ async def distilar(pregunta: str, respuesta: str) -> str:
 # --- 3. Recordar (destila + deduplica + guarda) --------------------------
 
 async def recordar(coleccion_base: str, personaje: str,
-                   pregunta: str, respuesta: str, sesion: str = ""):
-    """Bucle completo de escritura. Se llama en segundo plano tras responder."""
+                   pregunta: str, respuesta: str, sesion: str = "") -> dict:
+    """Bucle completo de escritura. Se llama en segundo plano tras responder.
+
+    Devuelve el veredicto {archivado, recuerdo, estado} para que el modo rayos X
+    pueda contar qué decidió la obra: 'guardado', 'trivial' o 'duplicado'.
+    """
     # 1. archivo crudo: SIEMPRE se guarda todo
+    archivado = True
     try:
         archivar(personaje, pregunta, respuesta, sesion)
     except Exception:
-        pass
+        archivado = False
 
     # 2. destilar el recuerdo
     recuerdo = await distilar(pregunta, respuesta)
     if not recuerdo:
-        return
+        return {"archivado": archivado, "recuerdo": "", "estado": "trivial"}
 
     # 3. deduplicar contra lo ya recordado; si es nuevo, guardarlo
     try:
@@ -141,7 +146,9 @@ async def recordar(coleccion_base: str, personaje: str,
             cercano = col.query(query_texts=[recuerdo], n_results=1)
             dist = cercano["distances"][0]
             if dist and dist[0] < DEDUP:
-                return   # ya recordamos algo casi idéntico
+                # ya recordamos algo casi idéntico
+                return {"archivado": archivado, "recuerdo": recuerdo,
+                        "estado": "duplicado"}
         col.upsert(
             documents=[recuerdo],
             ids=[f"{personaje}-{time.time_ns()}"],
@@ -149,14 +156,21 @@ async def recordar(coleccion_base: str, personaje: str,
                         "sesion": sesion}],
         )
     except Exception:
-        pass
+        return {"archivado": archivado, "recuerdo": recuerdo, "estado": "error"}
+    return {"archivado": archivado, "recuerdo": recuerdo, "estado": "guardado"}
 
 
 # --- 4. Recuperar experiencias (para el prompt) --------------------------
 
 def recuperar_experiencias(coleccion_base: str, pregunta: str,
                            k: int, umbral: float, margen: float) -> list:
-    """Devuelve los recuerdos vividos pertinentes a la pregunta (lista de str)."""
+    """Recuerdos vividos consultados para esta pregunta.
+
+    Devuelve TODOS los top-k con su distancia y si pasan el filtro:
+    [(texto, distancia, pasa), ...]. Los descartados también vuelven porque el
+    modo rayos X los muestra: enseñar qué NO se recordó es tan didáctico como
+    lo que sí. El backend inyecta en el prompt solo los que tienen pasa=True.
+    """
     try:
         col = _coleccion_exp(coleccion_base)
         if col.count() == 0:
@@ -166,7 +180,7 @@ def recuperar_experiencias(coleccion_base: str, pregunta: str,
         if not docs:
             return []
         mejor = min(dists)
-        return [d for d, dist in zip(docs, dists)
-                if dist <= umbral and dist <= mejor + margen]
+        return [(d, dist, dist <= umbral and dist <= mejor + margen)
+                for d, dist in zip(docs, dists)]
     except Exception:
         return []

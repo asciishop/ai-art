@@ -30,12 +30,54 @@
   #enviar { padding:0 22px; border-radius:24px; border:none; background:var(--acc); color:#fff;
             font-size:15px; cursor:pointer; }
   #enviar:disabled { opacity:.4; cursor:default; }
+
+  /* --- Modo rayos X: enseñar CÓMO se construyó cada respuesta ------------ */
+  #xray-btn { margin-left:auto; padding:6px 12px; border-radius:20px; font-size:12px;
+              border:1px solid var(--line); background:var(--panel); color:var(--dim); cursor:pointer; }
+  #xray-btn.on { color:#fff; border-color:var(--acc); background:transparent; }
+  .xray { align-self:flex-start; max-width:680px; width:100%; font-size:12.5px;
+          border:1px solid var(--line); border-left:2px solid var(--acc);
+          border-radius:10px; background:#12141c; color:var(--dim); }
+  .xray > .cap { border-top:1px solid var(--line); }
+  .xray > .cap:first-child { border-top:none; }
+  .xray summary { padding:9px 14px; cursor:pointer; color:var(--txt); list-style:none;
+                  display:flex; align-items:baseline; gap:8px; }
+  .xray summary::-webkit-details-marker { display:none; }
+  .xray summary::before { content:'▸'; color:var(--acc); font-size:10px; }
+  .xray details[open] > summary::before { content:'▾'; }
+  .xray .n { color:var(--acc); font-variant-numeric:tabular-nums; }
+  .xray .tag { margin-left:auto; font-size:11px; color:var(--dim); }
+  .xray .cuerpo { padding:2px 14px 14px 26px; display:flex; flex-direction:column; gap:9px; }
+  .xray .nota { font-style:italic; line-height:1.45; opacity:.85; }
+  .xray .aviso { color:#e8b04b; font-style:italic; line-height:1.45; }
+  .xray code, .xray pre { font-family:ui-monospace,Consolas,monospace; font-size:11.5px; }
+  .xray pre { margin:0; padding:9px 11px; background:#0b0c11; border:1px solid var(--line);
+              border-radius:7px; white-space:pre-wrap; color:var(--txt);
+              max-height:220px; overflow:auto; }
+  .xray .diales { color:var(--txt); }
+  /* un fragmento recuperado, con su distancia */
+  .frag { border:1px solid var(--line); border-radius:7px; padding:8px 10px; background:#0b0c11; }
+  .frag.no { opacity:.5; }
+  .frag .cab { display:flex; gap:8px; align-items:center; margin-bottom:6px; }
+  .frag .sello { font-size:10.5px; padding:1px 7px; border-radius:10px; border:1px solid; }
+  .frag.si .sello { color:#5ec98a; border-color:#2e6b47; }
+  .frag.no .sello { color:var(--dim); border-color:var(--line); }
+  .frag .dist { font-family:ui-monospace,Consolas,monospace; color:var(--txt); }
+  .frag .fuente { margin-left:auto; font-size:11px; }
+  .frag .txt { color:var(--txt); line-height:1.45; max-height:64px; overflow:hidden; }
+  /* regla de distancia: 0 (idéntico) → 1 (nada que ver), con el umbral marcado */
+  .regla { position:relative; height:4px; background:var(--line); border-radius:2px; margin:7px 0 6px; }
+  .regla .yo { position:absolute; top:0; height:4px; border-radius:2px; background:#5ec98a; }
+  .frag.no .regla .yo { background:#4a4f63; }
+  .regla .umb { position:absolute; top:-3px; width:1px; height:10px; background:#e8b04b; }
+  .rol { color:var(--acc); text-transform:uppercase; font-size:10.5px; letter-spacing:.6px; }
 </style>
 </head>
 <body>
   <header>
     <h1>GUARDIANES</h1>
     <div id="selector"></div>
+    <button id="xray-btn" title="Muestra cómo se construyó cada respuesta">🔬 Rayos X</button>
   </header>
   <div id="chat"><div id="saludo">Elige un guardián para empezar.</div></div>
   <footer>
@@ -90,12 +132,25 @@ async function enviar() {
   $inp.value = ''; $inp.disabled = true; $btn.disabled = true;
   burbuja('user', texto);
   const bot = burbuja('bot pending');
-  let acumulado = '';
+  let acumulado = '', panel = null, cerrado = false;
+
+  // Se llama en cuanto el personaje calla. En rayos X el stream sigue abierto
+  // un poco más (destilando el recuerdo), pero la interfaz ya se libera.
+  function terminar() {
+    if (cerrado) return;
+    cerrado = true;
+    bot.classList.remove('pending');
+    historial.push({ role:'user', content: texto });
+    historial.push({ role:'assistant', content: acumulado });
+    $inp.disabled = false; $btn.disabled = false; $inp.focus();
+    // Voz: síntesis del NAVEGADOR (Web Speech API). Instantánea, gratis, local.
+    if (acumulado.trim()) hablar(acumulado);
+  }
 
   try {
     const r = await fetch('/api/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({ personaje: actual.id, mensaje: texto, historial })
+      body: JSON.stringify({ personaje: actual.id, mensaje: texto, historial, rayosx: xray })
     });
     const reader = r.body.getReader();
     const dec = new TextDecoder();
@@ -109,24 +164,171 @@ async function enviar() {
         if (!l.startsWith('data: ')) continue;
         const d = l.slice(6);
         if (d === '[DONE]') continue;
-        try {
-          const t = JSON.parse(d).t;
-          acumulado += t; bot.textContent = acumulado;
-          $chat.scrollTop = $chat.scrollHeight;
-        } catch {}
+        let ev; try { ev = JSON.parse(d); } catch { continue; }
+        if (ev.t !== undefined) {
+          acumulado += ev.t; bot.textContent = acumulado;
+        } else if (ev.rayosx) {
+          // el proceso va ANTES de la respuesta: primero cómo, luego qué
+          panel = panelRayosX(ev.rayosx);
+          $chat.insertBefore(panel, bot);
+        } else if (ev.fin) {
+          terminar();
+        } else if (ev.memoria && panel) {
+          memoriaRayosX(panel, ev.memoria);
+        }
+        $chat.scrollTop = $chat.scrollHeight;
       }
     }
   } catch (e) {
     bot.textContent = '[La señal se perdió. Revisa que el backend y vLLM estén activos.]';
   }
+  terminar();
+}
 
-  bot.classList.remove('pending');
-  historial.push({ role:'user', content: texto });
-  historial.push({ role:'assistant', content: acumulado });
-  $inp.disabled = false; $btn.disabled = false; $inp.focus();
+// --- MODO RAYOS X --------------------------------------------------------
+// Abre la caja negra: por cada turno enseña las capas que produjeron la
+// respuesta. Apagado por defecto — en una sala, el público ve al personaje.
+let xray = false;
+const $xbtn = document.getElementById('xray-btn');
+$xbtn.onclick = () => { xray = !xray; $xbtn.classList.toggle('on', xray); };
 
-  // Voz: síntesis del NAVEGADOR (Web Speech API). Instantánea, gratis, local.
-  if (acumulado.trim()) hablar(acumulado);
+function el(tag, cls, txt) {
+  const d = document.createElement(tag);
+  if (cls) d.className = cls;
+  if (txt !== undefined) d.textContent = txt;
+  return d;
+}
+
+// Una capa plegable del panel. Devuelve el <details> con .cuerpo dentro.
+function capa(n, titulo, etiqueta, abierta) {
+  const det = el('details', 'cap');
+  det.open = !!abierta;
+  const sum = el('summary');
+  sum.appendChild(el('span', 'n', n));
+  sum.appendChild(el('span', null, titulo));
+  sum.appendChild(el('span', 'tag', etiqueta || ''));
+  det.appendChild(sum);
+  det.cuerpo = el('div', 'cuerpo');
+  det.appendChild(det.cuerpo);
+  return det;
+}
+
+// Un fragmento recuperado, con su distancia dibujada contra el umbral.
+function fragmento(f, umbral) {
+  const d = el('div', 'frag ' + (f.pasa ? 'si' : 'no'));
+  const cab = el('div', 'cab');
+  cab.appendChild(el('span', 'sello', f.pasa ? 'PASA' : 'descartado'));
+  cab.appendChild(el('span', 'dist', 'dist ' + f.dist.toFixed(3)));
+  cab.appendChild(el('span', 'fuente', f.origen === 'vivido' ? '✨ lo vivido' : f.fuente));
+  d.appendChild(cab);
+  const regla = el('div', 'regla');
+  const yo = el('div', 'yo');   yo.style.width = Math.min(100, f.dist * 100) + '%';
+  const umb = el('div', 'umb'); umb.style.left  = (umbral * 100) + '%';
+  regla.appendChild(yo); regla.appendChild(umb);
+  d.appendChild(regla);
+  d.appendChild(el('div', 'txt', f.texto));
+  return d;
+}
+
+function panelRayosX(x) {
+  const p = el('div', 'xray');
+
+  // ① IDENTIDAD — un cerebro, varias voces
+  const c1 = capa('①', 'Identidad — quién habla', x.personaje.lora);
+  c1.cuerpo.appendChild(el('div', 'diales', 'cerebro (modelo base): ' + x.personaje.base));
+  c1.cuerpo.appendChild(el('div', 'diales', 'voz entrenada (LoRA): ' + x.personaje.lora));
+  c1.cuerpo.appendChild(el('div', 'nota',
+    'Los personajes comparten el MISMO modelo base. Lo único que los separa es el '
+    + 'adaptador de voz que se le enchufa, y este texto de identidad:'));
+  const sp = el('details');
+  sp.appendChild(el('summary', null, 'system prompt · ' + x.system_prompt.length + ' caracteres'));
+  const spc = el('div', 'cuerpo');
+  spc.appendChild(el('pre', null, x.system_prompt || '(vacío)'));
+  sp.appendChild(spc);
+  c1.cuerpo.appendChild(sp);
+  p.appendChild(c1);
+
+  // ② RECUERDO — el RAG, con sus números a la vista
+  const frs = x.rag.fragmentos, n = x.rag.inyectados;
+  const c2 = capa('②', 'Recuerdo — qué buscó en su memoria',
+                  n + ' de ' + frs.length + ' pasan', true);
+  c2.cuerpo.appendChild(el('div', 'nota',
+    'Tu mensaje se convierte en un vector y se compara con los textos de su mundo. '
+    + 'La distancia va de 0 (idéntico) a 1 (no tiene nada que ver). Solo los que '
+    + 'quedan por debajo del umbral (la marca amarilla) entran en el prompt.'));
+  c2.cuerpo.appendChild(el('div', 'diales',
+    'umbral ' + x.rag.umbral + ' · margen ' + x.rag.margen + ' · k ' + x.rag.k));
+  if (!frs.length) {
+    c2.cuerpo.appendChild(el('div', 'aviso',
+      'No se consultó nada: su memoria está vacía o sin indexar (tools/ingest.py).'));
+  }
+  frs.forEach(f => c2.cuerpo.appendChild(fragmento(f, x.rag.umbral)));
+  if (frs.length && !n) {
+    c2.cuerpo.appendChild(el('div', 'aviso',
+      'Ningún fragmento superó el filtro: NO se inyectó memoria. Lo que diga sale '
+      + 'solo de su carácter y de su entrenamiento — y es justo aquí donde un '
+      + 'personaje se inventa las cosas con total aplomo.'));
+  }
+  p.appendChild(c2);
+
+  // ③ EL PROMPT — el texto literal, sin misterio
+  const total = x.prompt.reduce((s, m) => s + m.content.length, 0);
+  const c3 = capa('③', 'El prompt — lo que de verdad recibió', total + ' caracteres');
+  c3.cuerpo.appendChild(el('div', 'nota',
+    'El modelo no "ve" la conversación ni te conoce: recibe esta cadena de texto y '
+    + 'la continúa. Todo lo anterior existe solo para escribirla.'));
+  x.prompt.forEach(m => {
+    const bloque = el('div');
+    bloque.appendChild(el('div', 'rol', m.role));
+    bloque.appendChild(el('pre', null, m.content));
+    c3.cuerpo.appendChild(bloque);
+  });
+  p.appendChild(c3);
+
+  // ④ EL DADO — por qué nunca responde dos veces igual
+  const c4 = capa('④', 'El dado — cómo elige cada palabra',
+                  'temp ' + x.muestreo.temperature);
+  c4.cuerpo.appendChild(el('div', 'diales',
+    'temperature ' + x.muestreo.temperature + ' · top_p ' + x.muestreo.top_p
+    + ' · máximo ' + x.muestreo.max_tokens + ' tokens'));
+  c4.cuerpo.appendChild(el('div', 'nota',
+    'Palabra a palabra, el modelo calcula la probabilidad de todas las que podrían '
+    + 'seguir y SORTEA una. No escribe la más probable: la elige al azar entre las '
+    + 'buenas. temperature regula cuánto azar (0 = siempre la más probable, >1 = '
+    + 'temerario) y top_p limita el sorteo a las candidatas que suman esa '
+    + 'probabilidad. Por eso la misma pregunta nunca da dos veces la misma respuesta.'));
+  p.appendChild(c4);
+
+  // ⑤ MEMORIA — se rellena al final del turno
+  const c5 = capa('⑤', 'Memoria — qué se queda del encuentro', 'destilando…');
+  c5.dataset.capa = 'memoria';
+  c5.cuerpo.appendChild(el('div', 'nota',
+    'Cuando termina de hablar, otra llamada al modelo resume el encuentro en una '
+    + 'frase y decide si merece recordarse. Lo que se guarde podrá aparecer en la '
+    + 'capa ② de conversaciones futuras — con otros visitantes.'));
+  p.appendChild(c5);
+
+  return p;
+}
+
+// Rellena la capa ⑤ cuando llega el veredicto de la memoria.
+function memoriaRayosX(panel, m) {
+  const c = panel.querySelector('[data-capa="memoria"]');
+  if (!c) return;
+  const dic = {
+    guardado:  ['recuerdo guardado', '✨ Guardado como recuerdo recuperable:'],
+    trivial:   ['descartado', 'El modelo lo juzgó trivial (un saludo, una prueba): '
+                + 'no se guarda como recuerdo. El intercambio crudo sí queda archivado.'],
+    duplicado: ['duplicado', 'Ya había un recuerdo casi idéntico guardado: no se duplica.'],
+    error:     ['sin destilar', 'No se pudo destilar el recuerdo. El intercambio crudo '
+                + 'sí queda archivado.'],
+  };
+  const v = dic[m.estado] || dic.error;
+  c.querySelector('.tag').textContent = v[0];
+  c.cuerpo.appendChild(el('div', 'diales',
+    (m.archivado ? '✓' : '✕') + ' intercambio crudo → vector_store/archivo.db'));
+  c.cuerpo.appendChild(el('div', m.estado === 'guardado' ? 'diales' : 'aviso', v[1]));
+  if (m.recuerdo) c.cuerpo.appendChild(el('pre', null, m.recuerdo));
 }
 
 // Elige una voz en español del navegador (varía según el sistema).

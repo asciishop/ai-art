@@ -72,35 +72,57 @@ def _coleccion(nombre: str):
     return _colecciones[nombre]
 
 
-def recuperar_contexto(pers, pregunta: str) -> str:
-    """RAG: canon (mundo fijo) + experiencias (lo vivido). '' si nada pertinente."""
-    pasan = []
+def recuperar_contexto(pers, pregunta: str):
+    """RAG: canon (mundo fijo) + experiencias (lo vivido).
+
+    Devuelve (contexto, traza):
+      contexto — lo que se inyecta en el prompt ('' si nada es pertinente).
+      traza    — TODO lo que se consultó, con su distancia coseno y si pasó el
+                 filtro. Los descartados van incluidos a propósito: el modo
+                 rayos X los enseña, porque ver qué NO se recuperó es lo que
+                 distingue "recordar" de "inventar".
+    """
+    pasan, traza = [], []
     # 1. canon: la memoria fija del personaje
     try:
         col = _coleccion(pers.coleccion)
         res = col.query(query_texts=[pregunta], n_results=K)
         docs, dists = res["documents"][0], res["distances"][0]
+        metas = (res.get("metadatas") or [[]])[0] or [{}] * len(docs)
         if docs:
             mejor = min(dists)
-            pasan += [d for d, dist in zip(docs, dists)
-                      if dist <= UMBRAL and dist <= mejor + MARGEN]
+            for doc, meta, dist in zip(docs, metas, dists):
+                pasa = dist <= UMBRAL and dist <= mejor + MARGEN
+                if pasa:
+                    pasan.append(doc)
+                traza.append({"origen": "canon", "texto": doc, "pasa": pasa,
+                              "dist": round(float(dist), 3),
+                              "fuente": (meta or {}).get("fuente", "canon")})
     except Exception:
         pass   # colección aún no indexada: seguimos sin canon
     # 2. experiencias: lo que la obra ha vivido y decidió recordar
     if RECORDAR:
-        pasan += memoria.recuperar_experiencias(
-            pers.coleccion, pregunta, K, UMBRAL, MARGEN)
-    return "\n\n---\n\n".join(pasan)
+        for doc, dist, pasa in memoria.recuperar_experiencias(
+                pers.coleccion, pregunta, K, UMBRAL, MARGEN):
+            if pasa:
+                pasan.append(doc)
+            traza.append({"origen": "vivido", "texto": doc, "pasa": pasa,
+                          "dist": round(float(dist), 3), "fuente": "lo vivido"})
+    return "\n\n---\n\n".join(pasan), traza
 
 
-def construir_mensajes(pers, mensaje: str, historial: list) -> list:
-    """system[personaje] + historial reciente + turno actual (con RAG)."""
+def construir_mensajes(pers, mensaje: str, historial: list):
+    """system[personaje] + historial reciente + turno actual (con RAG).
+
+    Devuelve (mensajes, traza_rag): los mensajes que se envían al modelo y el
+    detalle de lo consultado en la memoria (ver recuperar_contexto).
+    """
     mensajes = [{"role": "system", "content": pers.system_prompt_texto()}]
     for h in historial[-MAX_HISTORIAL:]:
         if h.get("role") in ("user", "assistant") and h.get("content"):
             mensajes.append({"role": h["role"], "content": h["content"]})
 
-    contexto = recuperar_contexto(pers, mensaje)
+    contexto, traza = recuperar_contexto(pers, mensaje)
     if contexto:
         contenido = (
             "Fragmentos de TU memoria que PODRÍAN ser relevantes. Úsalos solo si "
@@ -111,7 +133,7 @@ def construir_mensajes(pers, mensaje: str, historial: list) -> list:
     else:
         contenido = mensaje
     mensajes.append({"role": "user", "content": contenido})
-    return mensajes
+    return mensajes, traza
 
 
 # --- API -----------------------------------------------------------------
@@ -121,6 +143,9 @@ class ChatIn(BaseModel):
     mensaje: str
     historial: list = []
     sesion: str = ""      # id opcional del encuentro (para agrupar en el archivo)
+    rayosx: bool = False  # modo didáctico: además de responder, cuenta CÓMO
+                          # (ver /api/chat). Apagado por defecto: en una sala
+                          # el público solo debe ver al personaje.
 
 
 @app.get("/api/personajes")
@@ -138,6 +163,16 @@ def listar_personajes():
 
 @app.post("/api/chat")
 async def chat(entrada: ChatIn):
+    """Responde en streaming (SSE). Tres tipos de evento:
+
+        {"t": "…"}        un trozo de texto de la respuesta (siempre)
+        {"rayosx": {…}}   ANTES del texto: con qué se construyó la respuesta
+        {"fin": true}     el personaje ha terminado de hablar
+        {"memoria": {…}}  DESPUÉS: qué decidió recordar la obra
+
+    'rayosx' y 'memoria' solo se emiten si el cliente pidió rayosx=true; en ese
+    caso el stream sigue abierto tras 'fin' mientras se destila el recuerdo.
+    """
     try:
         pers = registro.personaje(entrada.personaje)
     except KeyError:
@@ -145,7 +180,7 @@ async def chat(entrada: ChatIn):
     if not pers.activo:
         raise HTTPException(403, "Personaje no disponible")
 
-    mensajes = construir_mensajes(pers, entrada.mensaje, entrada.historial)
+    mensajes, traza_rag = construir_mensajes(pers, entrada.mensaje, entrada.historial)
     payload = {
         "model": pers.lora_texto,     # <-- selecciona el LoRA en vLLM
         "messages": mensajes,
@@ -160,6 +195,23 @@ async def chat(entrada: ChatIn):
         headers["Authorization"] = f"Bearer {VLLM_API_KEY}"
 
     async def generar():
+        # RAYOS X — se manda ANTES de la primera palabra, para que se vea que
+        # todo esto ya estaba decidido cuando el modelo empezó a hablar.
+        if entrada.rayosx:
+            yield "data: " + json.dumps({"rayosx": {
+                "personaje": {"id": pers.id, "nombre": pers.nombre,
+                              "lora": pers.lora_texto, "base": MODELO_BASE,
+                              "coleccion": pers.coleccion},
+                "system_prompt": pers.system_prompt_texto(),
+                "rag": {"fragmentos": traza_rag, "umbral": UMBRAL,
+                        "margen": MARGEN, "k": K,
+                        "inyectados": sum(1 for f in traza_rag if f["pasa"])},
+                "prompt": mensajes,          # lo que de verdad lee el modelo
+                "muestreo": {"temperature": payload["temperature"],
+                             "top_p": payload["top_p"],
+                             "max_tokens": payload["max_tokens"]},
+            }}) + "\n\n"
+
         completo = []   # acumulamos la respuesta para recordarla al final
         async with httpx.AsyncClient(timeout=120) as client:
             async with client.stream("POST", VLLM_URL, json=payload, headers=headers) as r:
@@ -178,15 +230,25 @@ async def chat(entrada: ChatIn):
                         completo.append(trozo)
                         # reenviamos como SSE al navegador
                         yield f"data: {json.dumps({'t': trozo})}\n\n"
-        yield "data: [DONE]\n\n"
 
-        # MEMORIA QUE ESCRIBE: en segundo plano, para no retrasar el cierre.
-        # Archiva el intercambio y destila un recuerdo si merece la pena.
-        if RECORDAR:
-            respuesta = "".join(completo).strip()
-            if respuesta:
-                asyncio.create_task(memoria.recordar(
-                    pers.coleccion, pers.id, entrada.mensaje, respuesta, entrada.sesion))
+        yield 'data: {"fin": true}\n\n'   # el personaje ya ha dicho todo
+
+        # MEMORIA QUE ESCRIBE: archiva el intercambio y destila un recuerdo.
+        # Normalmente va en segundo plano, para no retrasar el cierre. En rayos
+        # X se espera (unos segundos más) porque su veredicto ES la lección.
+        respuesta = "".join(completo).strip()
+        if RECORDAR and respuesta:
+            args = (pers.coleccion, pers.id, entrada.mensaje, respuesta, entrada.sesion)
+            if entrada.rayosx:
+                try:
+                    veredicto = await memoria.recordar(*args)
+                except Exception:
+                    veredicto = {"estado": "error"}
+                yield "data: " + json.dumps({"memoria": veredicto}) + "\n\n"
+            else:
+                asyncio.create_task(memoria.recordar(*args))
+
+        yield "data: [DONE]\n\n"
 
     return StreamingResponse(generar(), media_type="text/event-stream")
 

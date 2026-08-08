@@ -1,4 +1,4 @@
-# Plataforma de personajes artificiales 🪷
+/web-setup# Plataforma de personajes artificiales 🪷
 
 > Una máquina para **dar vida a personajes**: entidades con identidad, memoria,
 > voz propia y la capacidad de recordar lo que viven con quien las visita.
@@ -170,6 +170,33 @@ que vivió** con otros visitantes. La obra evoluciona durante la exposición.
 > **Ética:** si la obra es pública y guarda lo que dice la gente, avísalo (un
 > cartel: *"esta obra recuerda las conversaciones"*). Es lo honesto — y encaja
 > con el tema.
+
+---
+
+## PARTE D · Modo rayos X 🔬 (abrir la caja negra)
+
+El botón **🔬 Rayos X** de la web no cambia la respuesta: **la explica**. Con él
+activado, encima de cada respuesta aparece el proceso que la produjo, capa por
+capa — las mismas cinco de la tabla del principio:
+
+| Capa | Qué enseña |
+|------|------------|
+| ① **Identidad** | Qué modelo base y qué LoRA se usó, y el system prompt entero. Deja ver que los tres personajes son *un cerebro con voces distintas*. |
+| ② **Recuerdo** | Cada fragmento consultado con su **distancia coseno**, y si `PASA` o se descarta contra el umbral. Aquí se ve la diferencia entre recordar e inventar. |
+| ③ **El prompt** | El texto **literal** que recibió el modelo. Sin misterio: no "ve" la conversación, continúa una cadena de texto. |
+| ④ **El dado** | `temperature` / `top_p`: por qué la misma pregunta nunca da dos veces la misma respuesta. |
+| ⑤ **Memoria** | Qué destiló del encuentro: el recuerdo guardado, o por qué lo descartó. |
+
+**Está apagado por defecto** y solo se activa desde el navegador (`rayosx:true`
+en `/api/chat`). En una sala, el público ve al personaje; en clase, se enciende.
+
+> 💡 **La capa ② es la lección.** Cuando ningún fragmento supera el umbral, el
+> panel lo avisa: no se inyectó memoria y **lo que diga sale solo de su carácter**.
+> Es el momento exacto en que un personaje alucina, y con el panel abierto se ve
+> venir antes de leer la respuesta.
+
+Ajusta los diales con `RAG_UMBRAL`, `RAG_MARGEN` y `RAG_K` antes de arrancar el
+backend, y observa en el panel cómo cambia qué pasa el filtro.
 
 ---
 
