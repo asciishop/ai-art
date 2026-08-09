@@ -209,6 +209,11 @@ class ChatIn(BaseModel):
     rayosx: bool = False  # modo didáctico: además de responder, cuenta CÓMO
                           # (ver /api/chat). Apagado por defecto: en una sala
                           # el público solo debe ver al personaje.
+    recordar: bool = True # a false, el turno NO se archiva ni se destila. Lo usa
+                          # el poema que la obra lanza a quien pasa de lejos: es
+                          # un reclamo al aire, no un encuentro con nadie, y
+                          # guardarlo llenaría la memoria de conversaciones que
+                          # en realidad nunca ocurrieron.
 
 
 class VozIn(BaseModel):
@@ -360,7 +365,7 @@ async def chat(entrada: ChatIn):
         # Normalmente va en segundo plano, para no retrasar el cierre. En rayos
         # X se espera (unos segundos más) porque su veredicto ES la lección.
         respuesta = "".join(completo).strip()
-        if RECORDAR and respuesta:
+        if RECORDAR and entrada.recordar and respuesta:
             args = (pers.coleccion, pers.id, entrada.mensaje, respuesta, entrada.sesion)
             if entrada.rayosx:
                 try:

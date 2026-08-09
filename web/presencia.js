@@ -39,6 +39,12 @@ const CFG = {
                      // falta: hablando se gira la cabeza sin querer, y sin este
                      // margen los personajes se turnarían solos en el borde.
   MIRADA_MS:  1000,  // sostenido, para que un vistazo no cambie de personaje
+  // El reclamo: alguien APARECE en el encuadre, a cualquier distancia, y un
+  // guardián al azar le recita un poema para atraerlo. No hace falta que se
+  // acerque; basta con que la cámara lo vea.
+  APARECER_MS:  700, // visible este rato antes de contar como aparición
+  POEMA_MS:  90000,  // y luego 90 s de silencio: una sala con paso constante
+                     // no puede ser una máquina de recitar. ?poema=0 lo apaga.
   SILENCIO_MS: 700,  // margen tras el altavoz antes de abrir el micro
   ANCHO_CARA_M: 0.145,  // anchura media de una cara adulta, sien a sien
   FOV_H_GRADOS:  60,    // campo de visión horizontal típico de una webcam
@@ -54,6 +60,7 @@ if (url.has('lejos'))    CFG.LEJOS_M = parseFloat(url.get('lejos'));
 if (url.has('fov'))      CFG.FOV_H_GRADOS = parseFloat(url.get('fov'));
 if (url.has('giro'))     CFG.GIRO_GRADOS = parseFloat(url.get('giro'));
 if (url.has('vuelta'))   CFG.VUELTA_GRADOS = parseFloat(url.get('vuelta'));
+if (url.has('poema'))    CFG.POEMA_MS = parseFloat(url.get('poema')) * 1000;
 if (url.has('invertir')) CFG.INVERTIR_GIRO = url.get('invertir') !== '0';
 
 // Puntos de la malla de 478 vértices de MediaPipe que usamos.
@@ -79,6 +86,9 @@ let zonaFirme = 'frente';          // la zona YA en vigor (la del personaje acti
 let finHabla = 0;           // cuándo dejó de sonar el altavoz
 let proximoMicro = 0;       // no insistir con el micrófono más de una vez/seg
 let anterior = 0;           // marca de tiempo del fotograma previo
+let habiaCara = false;      // ya se contó la aparición de quien está ahora
+let tCara = 0;              // cuánto lleva viéndose una cara, a la distancia que sea
+let ultimoPoema = -Infinity;   // cuándo se recitó el último reclamo
 
 // --- Medir ----------------------------------------------------------------
 
@@ -155,6 +165,13 @@ function dejarleHablar() {
 function llega(zona) {
   estado = 'cerca';
   $panel.classList.add('cerca');
+  // Si ya está sonando algo, es el poema que lo atrajo. No se le saluda encima
+  // ni se cambia de guardián: el que recitó se queda, que para eso funcionó el
+  // reclamo. El micrófono se abrirá solo cuando el poema termine.
+  if (window.Sala.hablando()) {
+    invitar('Háblame.');
+    return;
+  }
   const id = CFG.QUIEN[zona] || CFG.QUIEN.frente;
   zonaFirme = zona;
   window.Sala.elegir(id);   // esto ya limpia el chat: cada visitante empieza de cero
@@ -236,6 +253,22 @@ function analizar(ahora) {
 
   if (estado === 'ausente' && tCerca >= CFG.ENTRAR_MS) { llega(zona || 'frente'); tLejos = 0; }
   else if (estado === 'cerca' && tLejos >= CFG.SALIR_MS) { marcha(); tCerca = 0; }
+
+  // 1b. EL RECLAMO. Distinto de lo anterior: no mira la distancia, solo si hay
+  //     alguien en el encuadre. Alguien que cruza el fondo de la sala también
+  //     cuenta — la idea es atraerlo, no atenderlo.
+  const hayCara = d !== null;
+  tCara = hayCara ? tCara + dt : 0;
+  if (!hayCara) habiaCara = false;          // se fue: la próxima será nueva
+  else if (!habiaCara && tCara >= CFG.APARECER_MS) {
+    habiaCara = true;
+    const lejos = d > CFG.CERCA_M;          // si ya está encima, le toca saludo
+    if (lejos && estado === 'ausente' && CFG.POEMA_MS > 0
+        && !window.Sala.ocupado() && ahora - ultimoPoema > CFG.POEMA_MS) {
+      ultimoPoema = ahora;
+      window.Sala.recitar();
+    }
+  }
 
   // 2. ¿hacia dónde mira? También sostenido en el tiempo.
   if (estado === 'cerca' && zona) {

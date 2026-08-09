@@ -71,6 +71,9 @@
   #parar[hidden] { display:none; }
   /* respuesta cortada a media frase */
   .bot.cortado::after { content:' ⏹'; color:#e8756a; font-size:12px; }
+  /* el poema al transeúnte: no es una respuesta, es la obra llamando */
+  .bot.poema { font-style:italic; border-style:dashed; border-color:var(--acc);
+               background:transparent; }
   /* micrófono: hablarle al personaje en vez de escribirle */
   #mic { flex:none; width:46px; border-radius:50%; border:1px solid var(--line);
          background:var(--panel); color:var(--dim); font-size:17px; cursor:pointer; }
@@ -307,6 +310,60 @@ async function enviar() {
     }
   }
   terminar();
+}
+
+// --- EL RECLAMO: un poema a quien pasa de lejos --------------------------
+// No es una conversación: es la obra hablándole al aire cuando alguien aparece
+// en el encuadre. Por eso no toca el historial, no abre el micrófono y pide al
+// backend que NO lo archive (recordar:false): guardarlo llenaría la memoria de
+// encuentros que en realidad no ocurrieron.
+const PROMPT_POEMA =
+  'Alguien acaba de aparecer a lo lejos y todavía no se ha acercado. Recítale '
+  + 'un poema muy breve, de tres o cuatro versos, para atraerlo hacia ti. '
+  + 'Escríbelo en tu voz. Solo el poema: sin saludos ni explicaciones.';
+
+let recitando = false;
+
+async function recitar() {
+  if (recitando || generando || !personajes.length) return false;
+  const p = personajes[Math.floor(Math.random() * personajes.length)];
+  recitando = true;
+  elegir(p, true);                     // discreto: sin saludo ni bienvenida
+  const bot = burbuja('bot poema pending');
+  let texto = '';
+  const ctrl = new AbortController();
+  pararTurno = () => { ctrl.abort(); };
+  modoParar(true);                     // se puede cortar con «para», como todo
+  try {
+    const r = await fetch('/api/chat', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      signal: ctrl.signal,
+      body: JSON.stringify({ personaje: p.id, mensaje: PROMPT_POEMA,
+                             historial: [], rayosx: false, recordar: false })
+    });
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lineas = buf.split('\n\n'); buf = lineas.pop();
+      for (const l of lineas) {
+        if (!l.startsWith('data: ')) continue;
+        const d = l.slice(6);
+        if (d === '[DONE]') continue;
+        let ev; try { ev = JSON.parse(d); } catch { continue; }
+        if (ev.t !== undefined) { texto += ev.t; bot.textContent = texto; }
+      }
+      $chat.scrollTop = $chat.scrollHeight;
+    }
+  } catch (e) { /* abortado o sin red: el poema simplemente no llega */ }
+  bot.classList.remove('pending');
+  pararTurno = null;
+  recitando = false;
+  if (texto.trim()) hablar(texto); else { bot.remove(); modoParar(false); }
+  return true;
 }
 
 // --- MODO RAYOS X --------------------------------------------------------
@@ -793,6 +850,7 @@ window.Sala = {
   cortarEscucha,
   callar,
   parar,     // corta generación Y voz: lo usa la presencia si el visitante se va
+  recitar,   // el poema al transeúnte: personaje al azar, sin archivar
 };
 
 $btn.onclick = enviar;
