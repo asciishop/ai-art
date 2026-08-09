@@ -37,8 +37,8 @@ personajes:
     # = cuánta transmisión rota. pitch/rate solo se usan si el servidor de voz
     # no está disponible y la web cae a la voz del navegador.
     voz_modelo:   "es_ES-sharvard-medium"
-    voz_androide: 0.70    # máquina, pero serena: es un buda, no una sierra
-    voz_lejania:  0.45    # el más "de otra dimensión": transmite a 3005 THz
+    voz_androide: 0.60    # máquina, pero serena: es un buda, no una sierra
+    voz_lejania:  0.32    # el más "de otra dimensión": transmite a 3005 THz
     voz_pitch: 0.8                                   # grave y sereno (buda eléctrico)
     voz_rate:  0.9
     # --- interfaz ---
@@ -59,8 +59,8 @@ personajes:
     trigger:     "zincstyle"                         # palabra que invoca el estilo
     # --- VOZ (ElevenLabs) ---
     voz_modelo:   "es_ES-davefx-medium"
-    voz_androide: 0.90    # el más metálico de los tres: guarda el metal
-    voz_lejania:  0.25    # y el más cercano, para que ese peso no se lo coma
+    voz_androide: 0.72    # el más metálico de los tres: guarda el metal
+    voz_lejania:  0.20    # y el más cercano, para que ese peso no se lo coma
                           # el pasa-altos de la lejanía (los dos mandos pelean)
     voz_pitch: 0.7                                   # muy grave, metálico
     voz_rate:  0.95
@@ -82,8 +82,8 @@ personajes:
     trigger:     "ucronstyle"
     # --- VOZ (ElevenLabs) ---
     voz_modelo:   "es_MX-claude-high"
-    voz_androide: 0.55    # menos máquina: es un fantasma, no un autómata
-    voz_lejania:  0.60    # y el más lejano y roto de los tres
+    voz_androide: 0.48    # menos máquina: es un fantasma, no un autómata
+    voz_lejania:  0.42    # y el más lejano y roto de los tres
     voz_pitch: 1.1                                   # algo más agudo, etéreo
     voz_rate:  1.0
     # --- interfaz ---

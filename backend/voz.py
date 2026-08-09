@@ -157,17 +157,23 @@ def _cadena(sr: int, lejania: float):
         PitchShift(semitones=_lerp(-1.0, -2.5, t)),
         # Saturar ANTES de filtrar. Al revés no sirve: la distorsión genera
         # armónicos por encima del corte y deshace el filtro que acaba de pasar.
-        Distortion(drive_db=_lerp(6.0, 24.0, t)),
+        # 24 dB emborronaba las oclusivas; con 15 sigue sonando forzada.
+        Distortion(drive_db=_lerp(5.0, 15.0, t)),
         # "Pixelado": resolución reducida, la señal perdió bits por el camino.
-        Bitcrush(bit_depth=_lerp(14.0, 7.0, t)),
-        # 300-3400 Hz es el ancho de banda de una radio, y es lo que más vende
-        # la idea de transmisión. Los filtros de pedalboard son de primer orden
+        # El bitcrush toca la resolución de AMPLITUD, no la temporal: da la
+        # textura digital sin borrar consonantes. Es el sitio correcto para
+        # buscar "pixelado", no el diezmado del androide.
+        Bitcrush(bit_depth=_lerp(14.0, 9.0, t)),
+        # Banda de radio. Los filtros de pedalboard son de primer orden
         # (6 dB/oct), pendiente demasiado suave: van encadenados.
-        HighpassFilter(cutoff_frequency_hz=_lerp(300, 600, t)),
-        HighpassFilter(cutoff_frequency_hz=_lerp(300, 600, t)),
-        LowpassFilter(cutoff_frequency_hz=_lerp(3600, 1700, t)),
-        LowpassFilter(cutoff_frequency_hz=_lerp(3600, 1700, t)),
-        LowpassFilter(cutoff_frequency_hz=_lerp(3600, 1700, t)),
+        HighpassFilter(cutoff_frequency_hz=_lerp(280, 520, t)),
+        HighpassFilter(cutoff_frequency_hz=_lerp(280, 520, t)),
+        # Antes esto bajaba a 1700 Hz con TRES etapas (18 dB/oct). Las eses y
+        # las efes viven en 4-8 kHz: con el corte ahí la voz sonaba a radio,
+        # sí, pero no se entendía. Se sube el corte y se quita una etapa: se
+        # conserva el color de transmisión y vuelven las consonantes.
+        LowpassFilter(cutoff_frequency_hz=_lerp(5000, 2800, t)),
+        LowpassFilter(cutoff_frequency_hz=_lerp(5000, 2800, t)),
         Delay(delay_seconds=_lerp(0.09, 0.28, t),
               feedback=_lerp(0.10, 0.55, t), mix=_lerp(0.05, 0.45, t)),
         # Desafinación lenta: la frecuencia no se sostiene, deriva. Esto es lo
@@ -175,8 +181,11 @@ def _cadena(sr: int, lejania: float):
         Chorus(rate_hz=0.35, depth=_lerp(0.10, 0.45, t),
                centre_delay_ms=9.0, mix=_lerp(0.05, 0.38, t)),
         Compressor(threshold_db=-20, ratio=3.5, attack_ms=5, release_ms=140),
-        Reverb(room_size=_lerp(0.80, 0.99, t), damping=_lerp(0.50, 0.85, t),
-               wet_level=_lerp(0.18, 0.70, t), dry_level=_lerp(0.88, 0.35, t),
+        # La reverb es lo segundo que más emborrona: cada sílaba se solapa con
+        # la cola de la anterior. Se recorta el envío y se sube la voz directa;
+        # sigue habiendo espacio, pero se oye a quien habla y no solo la sala.
+        Reverb(room_size=_lerp(0.80, 0.95, t), damping=_lerp(0.50, 0.80, t),
+               wet_level=_lerp(0.12, 0.42, t), dry_level=_lerp(0.92, 0.62, t),
                width=1.0),
         Gain(gain_db=-2.0),
     ])
@@ -211,29 +220,35 @@ def _androidizar(audio: np.ndarray, sr: int, intensidad: float):
     # La voz SECA es el esqueleto y se queda casi entera: es la única capa que
     # lleva las consonantes. Las demás se suman por debajo, como maquinaria.
     # Bajar la seca es lo que hacía ininteligible la primera versión.
-    mezcla = (audio * (1.0 - 0.15 * t)
-              + sub * _lerp(0.0, 0.45, t)
-              + ring * _lerp(0.0, 0.20, t)
-              + coro * _lerp(0.0, 0.12, t))
+    mezcla = (audio * (1.0 - 0.08 * t)          # la seca casi intacta
+              + sub * _lerp(0.0, 0.40, t)
+              + ring * _lerp(0.0, 0.13, t)      # el anillo hace de máquina, pero
+              + coro * _lerp(0.0, 0.09, t))     # en exceso tapa los formantes
 
-    # Aliasing digital primitivo. Con factor > 2 se come las consonantes.
-    factor = int(round(_lerp(1.0, 2.0, t)))
-    if factor > 1:
-        mezcla = np.repeat(mezcla[::factor], factor)[:n]
+    # Aliasing digital primitivo — el efecto que MÁS daño hace a la claridad,
+    # porque reduce la resolución TEMPORAL y ahí es donde viven las consonantes.
+    # Antes se calculaba con int(round(lerp(1,2,t))), que salta a 2 en cuanto
+    # t >= 0.5: los tres personajes lo tenían puesto sin que se viera en ningún
+    # dial. Ahora solo entra en ajustes deliberadamente extremos.
+    if t >= 0.92:
+        mezcla = np.repeat(mezcla[::2], 2)[:n]
 
     # Filtro de peine: resonancia metálica, hablar dentro de una carcasa.
     if t > 0.05:
         peine = Pedalboard([Delay(delay_seconds=_lerp(0.020, 0.008, t),
-                                  feedback=_lerp(0.0, 0.35, t),
-                                  mix=_lerp(0.0, 0.18, t))])
+                                  feedback=_lerp(0.0, 0.25, t),
+                                  mix=_lerp(0.0, 0.11, t))])
         mezcla = peine(mezcla.reshape(1, -1), sr).reshape(-1)[:n]
 
     # Realce de presencia: devuelve las consonantes que la maquinaria se comió.
     # 1,5-4 kHz es donde se distingue una "s" de una "f". Sin esto suena a
     # máquina pero no se entiende nada, que es justo lo que NO se quería.
+    # Se añade una tercera banda arriba (4,5 kHz) para las sibilantes, que son
+    # las primeras en caer y las que más se echan de menos.
     claridad = Pedalboard([
-        PeakFilter(cutoff_frequency_hz=2600.0, gain_db=_lerp(0.0, 6.0, t), q=0.7),
-        PeakFilter(cutoff_frequency_hz=1400.0, gain_db=_lerp(0.0, 3.0, t), q=0.9),
+        PeakFilter(cutoff_frequency_hz=4500.0, gain_db=_lerp(0.0, 4.0, t), q=0.8),
+        PeakFilter(cutoff_frequency_hz=2600.0, gain_db=_lerp(0.0, 7.0, t), q=0.7),
+        PeakFilter(cutoff_frequency_hz=1400.0, gain_db=_lerp(0.0, 3.5, t), q=0.9),
     ])
     mezcla = claridad(mezcla.reshape(1, -1), sr).reshape(-1)[:n]
 
@@ -256,8 +271,10 @@ def _desvanecer(audio: np.ndarray, sr: int, lejania: float):
             np.sin(2 * np.pi * 0.07 * tiempo + 1.3) * 0.4)
     envolvente = (1.0 - prof) + prof * (0.5 + 0.5 * onda)
 
+    # Menos cortes que antes (eran 2,5/s): cada uno se lleva una sílaba entera
+    # por delante. Con ~1 por segundo la señal sigue pareciendo inestable.
     rng = np.random.default_rng()
-    for _ in range(int(_lerp(0.0, 2.5, t) * (n / sr))):
+    for _ in range(int(_lerp(0.0, 1.1, t) * (n / sr))):
         dur = int(sr * rng.uniform(0.03, 0.09))
         if dur < 4:
             continue

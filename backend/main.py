@@ -215,6 +215,11 @@ class VozIn(BaseModel):
     personaje: str
     texto: str
     sintonia: bool = False   # ráfaga de estática antes: solo en la 1ª frase
+    # Sobreescriben los diales del registro SOLO para esta petición. Sirven para
+    # afinar de oído en la sala sin editar personajes.yaml ni reiniciar nada:
+    #   -d '{"personaje":"zinc","texto":"...","androide":0.5,"lejania":0.3}'
+    androide: float | None = None
+    lejania: float | None = None
 
 
 @app.get("/api/voz/estado")
@@ -248,11 +253,12 @@ def voz_sintetizar(entrada: VozIn):
     if not texto:
         raise HTTPException(400, "Sin texto")
     try:
-        wav = voz.sintetizar(texto,
-                             modelo=pers.voz_modelo,
-                             lejania=pers.voz_lejania,
-                             androide=pers.voz_androide,
-                             sintonia=entrada.sintonia)
+        wav = voz.sintetizar(
+            texto,
+            modelo=pers.voz_modelo,
+            lejania=pers.voz_lejania if entrada.lejania is None else entrada.lejania,
+            androide=pers.voz_androide if entrada.androide is None else entrada.androide,
+            sintonia=entrada.sintonia)
     except Exception as e:
         raise HTTPException(500, f"{type(e).__name__}: {e}")
     return Response(content=wav, media_type="audio/wav")
