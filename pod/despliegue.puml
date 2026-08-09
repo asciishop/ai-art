@@ -1,0 +1,134 @@
+@startuml plataforma-despliegue
+title Plataforma de personajes artificiales - Diagrama de despliegue
+
+skinparam shadowing false
+skinparam defaultTextAlignment center
+skinparam nodesep 16
+skinparam ranksep 26
+skinparam ArrowFontSize 11
+
+' ============================================================
+'  0. CONSTRUCCION — ocurre antes, y luego se apaga
+' ============================================================
+node "Pod de entrenamiento\n(efimero: se apaga al terminar)" as TRAINPOD #F3E5F5 {
+  component "tools/train.py\nQLoRA 4-bit (Unsloth)" as TRAIN
+}
+
+node "Portatil de autoria" as LAPTOP #F3E5F5 {
+  artifact "repo plataforma/\n+ los 3 adapter/ entrenados" as REPO
+}
+
+' ============================================================
+'  1. LA SALA — todo lo que pasa delante del visitante
+' ============================================================
+node "SALA (instalacion fisica)" as SALA #FDF6E3 {
+
+  actor "visitante" as USER
+
+  node "Equipo de sala (PC / portatil)" as KIOSCO {
+
+    node "Webcam 640x480" as CAM
+    node "Microfono"      as MIC
+    node "Altavoz"        as SPK
+
+    node "Navegador: Chrome o Edge\nexige HTTPS o localhost" as NAV #E3F2FD {
+      component "index.html\nchat + modo rayos X" as WEB
+      component "presencia.js\ncercania + giro de cabeza" as PRES
+      artifact  "vendor/\nMediaPipe WASM 9 MB\nface_landmarker.task 3,7 MB" as MODELCV
+      component "Web Speech API\nsintesis: local\nreconocimiento: remoto" as SPEECH
+    }
+  }
+}
+
+cloud "Reconocimiento de voz\ndel navegador (Google)" as STT #FFEBEE
+
+' La camara y el microfono NO se abren sobre http hacia una IP de red: el
+' navegador exige un origen seguro. El proxy de RunPod es quien da ese HTTPS.
+cloud "Proxy HTTPS de RunPod\n<pod-id>-3000.proxy.runpod.net" as PROXY #E1F5FE
+
+' ============================================================
+'  2. EL POD — el unico servidor
+' ============================================================
+node "POD RunPod - GPU 24 GB - CUDA >= 12.8" as POD #E8F5E9 {
+
+  node "uvicorn :3000\nUNICO PUERTO EXPUESTO" as UVI {
+    component "backend/main.py\nFastAPI: orquesta el turno" as BACK
+    component "backend/memoria.py\nla memoria que escribe" as MEMO
+    component "tools/registro.py" as REGC
+    artifact  "web/ servido como estatico" as WEBSRV
+  }
+
+  component "tools/ingest.py\n(se corre UNA vez, antes de abrir)" as INGEST #FFF3CD
+
+  node "vLLM :8000\nINTERNO - no se expone" as VLLMNODE {
+    component "OpenAI API server\nmulti-LoRA" as VLLM
+    artifact  "Qwen2.5-3B-Instruct\nmodelo base: 1 sola copia en VRAM" as BASE
+  }
+
+  node "Disco del pod (/workspace)" as DISCO {
+    artifact  "personajes/*/adapter/\n3 LoRA, ~100 MB c/u" as LORAS
+    artifact  "personajes.yaml\nREGISTRO CENTRAL" as YAML
+    artifact  "personajes/*/system_prompt.md" as SYSP
+    database  "vector_store/chroma.sqlite3\ncanon: *_mem\nvivido: *_exp" as CHROMA
+    database  "vector_store/archivo.db\nSQLite: intercambios crudos" as SQLITE
+  }
+}
+
+' ============================================================
+'  Despliegue: una sola vez, antes de abrir la sala
+' ============================================================
+TRAIN  ..> REPO   : <<deploy>>\nadapter/ safetensors
+REPO   ..> DISCO  : <<deploy>>\ngit clone en /workspace\n(los adapter/ DEBEN viajar)
+' Las comillas dobles fuerzan monoespaciado y evitan que PlantUML lea el '--'
+' de los flags como marca de tachado.
+INGEST ..> CHROMA : ""--todos --reset""\nindexa el canon
+
+' ============================================================
+'  Runtime: un turno de conversacion
+' ============================================================
+USER --> CAM : se acerca a < 0,5 m\ny gira la cabeza
+USER --> MIC : habla
+SPK --> USER : le responde en voz alta
+
+CAM --> PRES     : MediaStream\n(no sale del navegador)
+PRES --> MODELCV : carga WASM + modelo
+PRES --> WEB     : elige personaje\ny abre el micro
+WEB --> SPEECH   : hablar() / escuchar()
+MIC --> SPEECH
+SPEECH ..> STT   : HTTPS: audio del visitante\n(UNICA salida a internet)
+SPEECH --> SPK   : sintesis local\n(pitch/rate por personaje)
+
+NAV   --> PROXY : HTTPS\nsin origen seguro no hay\ncamara ni microfono
+PROXY --> UVI   : reenvia al :3000 del pod\nGET /  y  /web/* (html, js, wasm, .task)\nGET /api/personajes\nPOST /api/chat -> SSE en streaming
+
+BACK --> REGC   : que LoRA, coleccion y prompt
+REGC --> YAML
+REGC --> SYSP
+BACK --> CHROMA : RAG: canon + vivido
+BACK --> VLLM   : HTTP localhost:8000\nmodel = LoRA del personaje
+VLLM --> BASE
+VLLM --> LORAS  : carga los 3 adaptadores
+BACK --> MEMO   : al cerrar el turno
+MEMO --> SQLITE : archiva el intercambio crudo
+MEMO --> VLLM   : destila el recuerdo\n(modelo BASE, sin LoRA)
+MEMO --> CHROMA : guarda el recuerdo en *_exp
+
+note right of VLLMNODE
+  No se expone en RunPod.
+  Solo le habla el backend,
+  que es quien valida que el
+  personaje pedido exista
+  y este activo.
+end note
+
+note bottom of STT
+  El reconocimiento de voz del
+  navegador SI sale a internet.
+  Para una sala sin red -o para
+  no ceder el audio- sustituir
+  por faster-whisper en el pod.
+  La sintesis y toda la vision
+  por webcam son 100% locales.
+end note
+
+@enduml

@@ -30,6 +30,15 @@
   #enviar { padding:0 22px; border-radius:24px; border:none; background:var(--acc); color:#fff;
             font-size:15px; cursor:pointer; }
   #enviar:disabled { opacity:.4; cursor:default; }
+  /* micrófono: hablarle al personaje en vez de escribirle */
+  #mic { flex:none; width:46px; border-radius:50%; border:1px solid var(--line);
+         background:var(--panel); color:var(--dim); font-size:17px; cursor:pointer; }
+  #mic:hover:not(:disabled) { border-color:var(--acc); color:var(--txt); }
+  #mic:disabled { opacity:.4; cursor:default; }
+  #mic.oyendo { background:#c0392b; border-color:#c0392b; color:#fff;
+                animation:pulso 1.3s ease-out infinite; }
+  @keyframes pulso { 0% { box-shadow:0 0 0 0 rgba(192,57,43,.5); }
+                     100% { box-shadow:0 0 0 12px rgba(192,57,43,0); } }
 
   /* --- Modo rayos X: enseñar CÓMO se construyó cada respuesta ------------ */
   #xray-btn { margin-left:auto; padding:6px 12px; border-radius:20px; font-size:12px;
@@ -71,6 +80,26 @@
   .frag.no .regla .yo { background:#4a4f63; }
   .regla .umb { position:absolute; top:-3px; width:1px; height:10px; background:#e8b04b; }
   .rol { color:var(--acc); text-transform:uppercase; font-size:10.5px; letter-spacing:.6px; }
+
+  /* --- Presencia: la obra mira de vuelta --------------------------------- */
+  #ojo { padding:6px 12px; border-radius:20px; font-size:12px; border:1px solid var(--line);
+         background:var(--panel); color:var(--dim); cursor:pointer; }
+  #ojo.on { color:#fff; border-color:var(--acc); background:transparent; }
+  #presencia { position:fixed; right:16px; bottom:84px; width:168px; z-index:5;
+               border:1px solid var(--line); border-radius:10px; overflow:hidden;
+               background:#000; display:none; }
+  #presencia.viendo { display:block; }
+  #presencia.cerca { border-color:var(--acc); }
+  #cam { display:block; width:100%; height:auto; transform:scaleX(-1); opacity:.75; }
+  #pstat { padding:5px 8px; font-size:10.5px; color:var(--dim); background:var(--panel);
+           font-family:ui-monospace,Consolas,monospace; white-space:pre-line; line-height:1.4; }
+  #presencia.cerca #pstat { color:var(--txt); }
+  /* la invitación: aparece cuando alguien se acerca */
+  #invita { position:fixed; left:50%; top:76px; transform:translateX(-50%) translateY(-8px);
+            z-index:6; padding:11px 22px; border-radius:24px; font-size:14px;
+            background:var(--acc); color:#fff; box-shadow:0 6px 24px rgba(0,0,0,.45);
+            opacity:0; pointer-events:none; transition:opacity .45s, transform .45s; }
+  #invita.ver { opacity:1; transform:translateX(-50%) translateY(0); }
 </style>
 </head>
 <body>
@@ -78,10 +107,14 @@
     <h1>GUARDIANES</h1>
     <div id="selector"></div>
     <button id="xray-btn" title="Muestra cómo se construyó cada respuesta">🔬 Rayos X</button>
+    <button id="ojo" title="La webcam detecta quién se acerca y hacia dónde mira">👁 Presencia</button>
   </header>
   <div id="chat"><div id="saludo">Elige un guardián para empezar.</div></div>
+  <div id="invita"></div>
+  <div id="presencia"><video id="cam" playsinline muted></video><div id="pstat"></div></div>
   <footer>
-    <input id="entrada" placeholder="Escribe tu mensaje…" autocomplete="off" disabled>
+    <input id="entrada" placeholder="Escribe tu mensaje… o pulsa el micrófono" autocomplete="off" disabled>
+    <button id="mic" title="Habla en vez de escribir" disabled>🎤</button>
     <button id="enviar" disabled>Enviar</button>
   </footer>
 
@@ -90,6 +123,13 @@ const $chat = document.getElementById('chat');
 const $sel = document.getElementById('selector');
 const $inp = document.getElementById('entrada');
 const $btn = document.getElementById('enviar');
+const $mic = document.getElementById('mic');
+let generando = false;   // el personaje está redactando su respuesta
+
+// Abre o cierra los tres controles a la vez (se bloquean mientras responde).
+function controles(activos) {
+  $inp.disabled = $btn.disabled = $mic.disabled = !activos;
+}
 
 let personajes = [];
 let actual = null;
@@ -116,7 +156,7 @@ function elegir(p) {
     c.style.background = on ? (p.color || '#5B8BF0') : '';
   });
   $chat.innerHTML = `<div id="saludo">${p.saludo || ''}</div>`;
-  $inp.disabled = false; $btn.disabled = false; $inp.focus();
+  controles(true); $inp.focus();
 }
 
 function burbuja(clase, texto='') {
@@ -129,7 +169,7 @@ function burbuja(clase, texto='') {
 async function enviar() {
   const texto = $inp.value.trim();
   if (!texto || !actual) return;
-  $inp.value = ''; $inp.disabled = true; $btn.disabled = true;
+  $inp.value = ''; controles(false); generando = true;
   burbuja('user', texto);
   const bot = burbuja('bot pending');
   let acumulado = '', panel = null, cerrado = false;
@@ -138,11 +178,11 @@ async function enviar() {
   // un poco más (destilando el recuerdo), pero la interfaz ya se libera.
   function terminar() {
     if (cerrado) return;
-    cerrado = true;
+    cerrado = true; generando = false;
     bot.classList.remove('pending');
     historial.push({ role:'user', content: texto });
     historial.push({ role:'assistant', content: acumulado });
-    $inp.disabled = false; $btn.disabled = false; $inp.focus();
+    controles(true); $inp.focus();
     // Voz: síntesis del NAVEGADOR (Web Speech API). Instantánea, gratis, local.
     if (acumulado.trim()) hablar(acumulado);
   }
@@ -341,7 +381,7 @@ if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => {};
 
 function hablar(texto) {
   if (!('speechSynthesis' in window)) return;   // navegador sin soporte
-  speechSynthesis.cancel();                      // corta lo anterior
+  callar();                                      // corta lo anterior
   const u = new SpeechSynthesisUtterance(texto);
   const v = vozEspanol();
   if (v) u.voice = v;
@@ -352,8 +392,119 @@ function hablar(texto) {
   speechSynthesis.speak(u);
 }
 
+// Hacerle callar. Importante antes de escuchar: si el altavoz sigue sonando,
+// el micrófono recoge al personaje y acabaría conversando consigo mismo.
+function callar() {
+  if ('speechSynthesis' in window) speechSynthesis.cancel();
+}
+function hablando() {
+  return 'speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending);
+}
+
+// --- OÍDO: hablarle en vez de escribirle ---------------------------------
+// Reconocimiento de voz del NAVEGADOR (Web Speech API), la pieza gemela de
+// hablar(): sin servidor, sin claves, sin descargas. Chrome y Edge lo tienen;
+// Firefox todavía no, y allí el botón simplemente desaparece.
+// Requiere HTTPS (o localhost) para que el navegador dé acceso al micrófono.
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+const PLACEHOLDER = $inp.placeholder;
+let rec = null, oyendo = false, dictado = '';
+
+if (!SR) {
+  $mic.remove();          // sin soporte: se sigue escribiendo, como siempre
+} else {
+  rec = new SR();
+  rec.lang = 'es-ES';
+  rec.continuous = false;      // una intervención por pulsación: el navegador
+                               // corta solo al detectar que has terminado
+  rec.interimResults = true;   // ir viendo lo que entiende mientras hablas
+
+  rec.onstart = () => {
+    oyendo = true;
+    $mic.classList.add('oyendo');
+    $mic.title = 'Escuchando… pulsa para terminar';
+    $inp.placeholder = 'Escuchando…';
+  };
+
+  rec.onresult = e => {
+    // Lo ya cerrado se acumula en 'dictado'; lo provisional solo se muestra,
+    // porque el navegador aún puede corregirlo.
+    let parcial = '';
+    for (let i = e.resultIndex; i < e.results.length; i++) {
+      const r = e.results[i];
+      if (r.isFinal) dictado += r[0].transcript; else parcial += r[0].transcript;
+    }
+    $inp.value = (dictado + parcial).trim();
+  };
+
+  rec.onerror = e => {
+    const motivos = {
+      'not-allowed': 'Sin permiso de micrófono: actívalo en el navegador.',
+      'service-not-allowed': 'Sin permiso de micrófono: actívalo en el navegador.',
+      'no-speech': 'No se oyó nada. Pulsa el micrófono y habla.',
+      'audio-capture': 'No se encontró ningún micrófono.',
+      'network': 'El reconocimiento necesita conexión. Escribe si prefieres.',
+    };
+    if (e.error !== 'aborted') $inp.placeholder = motivos[e.error]
+      || ('El micrófono falló (' + e.error + '). Escribe si prefieres.');
+  };
+
+  rec.onend = () => {
+    oyendo = false;
+    $mic.classList.remove('oyendo');
+    $mic.title = 'Habla en vez de escribir';
+    if ($inp.placeholder === 'Escuchando…') $inp.placeholder = PLACEHOLDER;
+    // Si entendió algo, se envía solo: obligar a pulsar un botón después de
+    // hablar rompe la ilusión de estar conversando con alguien.
+    const dicho = dictado.trim();
+    dictado = '';
+    if (dicho) { $inp.value = dicho; enviar(); }
+  };
+
+  $mic.onclick = () => { oyendo ? rec.stop() : escuchar(); };
+}
+
+// Abrir el micrófono. La usan el botón 🎤 y, sola, la detección de presencia.
+function escuchar() {
+  if (!rec || oyendo || $mic.disabled) return false;
+  callar();
+  dictado = ''; $inp.value = ''; $inp.placeholder = PLACEHOLDER;
+  try { rec.start(); } catch (e) { return false; }  // ya arrancando: ignorar
+  return true;
+}
+// Cerrar el micrófono TIRANDO lo oído (a diferencia de stop(), que lo envía).
+function cortarEscucha() {
+  if (!rec || !oyendo) return;
+  dictado = ''; $inp.value = '';
+  rec.abort();
+}
+
+// --- Contrato con el módulo de presencia (web/presencia.js) --------------
+// Lo que la webcam puede pedirle a la sala, y nada más. Presencia no toca el
+// chat por dentro: si mañana se cambia la interfaz, solo se revisa esta lista.
+window.Sala = {
+  actual:   () => actual && actual.id,
+  ids:      () => personajes.map(p => p.id),
+  elegir:   id => { const p = personajes.find(x => x.id === id); if (p) elegir(p); return !!p; },
+  nombre:   id => { const p = personajes.find(x => x.id === id); return p ? p.nombre : id; },
+  listos:   () => personajes.length > 0,
+  ocupado:  () => generando || oyendo || hablando(),
+  generando: () => generando,
+  // Saluda en voz alta: es la invitación cuando alguien se acerca de verdad.
+  saludar:  () => { if (actual && actual.saludo) hablar(actual.saludo); },
+  oyendo:   () => oyendo,
+  hablando,
+  hayMicro: () => !!rec,
+  escuchar,
+  cortarEscucha,
+  callar,
+};
+
 $btn.onclick = enviar;
 $inp.addEventListener('keydown', e => { if (e.key === 'Enter') enviar(); });
 </script>
+<!-- La webcam: quién se acerca y hacia dónde mira. Habla con la sala solo a
+     través de window.Sala, definido justo arriba. -->
+<script type="module" src="/web/presencia.js"></script>
 </body>
 </html>

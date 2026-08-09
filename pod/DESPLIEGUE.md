@@ -83,7 +83,7 @@ bash pod/arranque.sh
 ```
 
 Esto lanza:
-- **vLLM** con los 3 LoRAs en el puerto **8001** (interno, no exponer).
+- **vLLM** con los 3 LoRAs en el puerto **8000** (interno, no exponer).
 - **backend + web** en el puerto **3000**.
 
 Espera a ver `== TODO ARRIBA ==`. Si algo falla, mira `pod/vllm.log`.
@@ -92,7 +92,7 @@ Espera a ver `== TODO ARRIBA ==`. Si algo falla, mira `pod/vllm.log`.
 
 ## 6. Exponer y abrir
 
-- En RunPod, **expón el puerto 3000** (el 8001 NO).
+- En RunPod, **expón el puerto 3000** (el 8000 NO).
 - Abre la URL pública del 3000 → la web con los 3 guardianes.
 
 ---
@@ -101,13 +101,13 @@ Espera a ver `== TODO ARRIBA ==`. Si algo falla, mira `pod/vllm.log`.
 
 ```bash
 # ¿vLLM vivo y ve los 3 LoRAs?
-curl -s http://localhost:8001/v1/models | python -m json.tool
+curl -s http://localhost:8000/v1/models | python -m json.tool
 
 # ¿el backend ve los personajes?
 curl -s http://localhost:3000/api/personajes
 
 # probar un turno directo a vLLM (sin backend)
-curl -s http://localhost:8001/v1/chat/completions -H "Content-Type: application/json" -d '{
+curl -s http://localhost:8000/v1/chat/completions -H "Content-Type: application/json" -d '{
   "model": "va91-text",
   "messages": [{"role":"user","content":"¿Quién eres?"}],
   "max_tokens": 80
@@ -124,7 +124,7 @@ curl -s http://localhost:8001/v1/chat/completions -H "Content-Type: application/
 | `CUDA error: out of memory` | el vLLM por defecto ocupa la GPU | `pkill -f vllm` antes (paso 3) |
 | `python: command not found` | la imagen solo trae python3 | symlink (paso 2) |
 | vLLM no encuentra el LoRA | falta el `adapter/` en el pod | subirlos (paso 1) |
-| backend no conecta con vLLM | puerto/URL | `VLLM_URL` apunta a 8001 (lo pone arranque.sh) |
+| backend no conecta con vLLM | puerto/URL | `VLLM_URL` apunta a 8000 (lo pone arranque.sh) |
 
 ---
 

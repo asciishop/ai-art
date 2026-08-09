@@ -16,6 +16,7 @@ Arranque:
 
 import asyncio
 import json
+import mimetypes
 import os
 import sys
 
@@ -254,6 +255,17 @@ async def chat(entrada: ChatIn):
 
 
 # --- Servir la web estática ---------------------------------------------
+# En Windows, mimetypes consulta el registro, y ahí '.js' aparece a veces como
+# 'text/plain' según lo que haya instalado el equipo. El navegador RECHAZA un
+# módulo ES o un WebAssembly servido con el tipo equivocado, y la detección de
+# presencia (web/presencia.js + MediaPipe) no arrancaría. Un fallo que solo
+# ocurre en algunas máquinas es el peor de depurar el día del montaje: se fijan
+# a mano y se acabó.
+mimetypes.add_type("text/javascript", ".js")
+mimetypes.add_type("text/javascript", ".mjs")
+mimetypes.add_type("application/wasm", ".wasm")
+
+
 @app.get("/")
 def raiz():
     return FileResponse(os.path.join(WEB_DIR, "index.html"))

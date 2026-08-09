@@ -212,17 +212,71 @@ Ni el backend ni la web se tocan: leen el registro y el personaje aparece solo.
 
 ---
 
-## Hacia la instalación (lo que falta)
+## La instalación: sin teclado y sin botones
 
-Hoy la plataforma chatea por **texto en una web**. Para una instalación física
-se le añaden dos piezas (el motor ya está listo para recibirlas):
+El visitante no toca nada. Se acerca, y la obra reacciona.
 
-- **Oído** — reconocimiento de voz (`faster-whisper`): el visitante habla.
-- **Voz audible** — síntesis con efectos (Piper + cadena de "androide"): la obra
-  responde en voz alta, con su timbre. *(Prototipo en la carpeta `../clase/`.)*
+```
+se acerca a <0,5 m  →  la webcam lo ve  →  el guardián saluda en voz alta
+                                        →  el micrófono se abre solo
+        habla  →  el modelo piensa y recuerda  →  responde por el altavoz
+                                        →  el micrófono vuelve a abrirse
+   gira la cabeza  →  le responde otro guardián
+        se va  →  la obra calla y espera al siguiente
+```
 
-Con eso el flujo se cierra:
-**micrófono → oye → piensa y recuerda → habla → altavoz.**
+**Oído y voz** son la Web Speech API del navegador: sin servidor y sin claves.
+El botón 🎤 sigue ahí para usarlo a mano.
+
+**Presencia** ([`web/presencia.js`](web/presencia.js)) es MediaPipe Face
+Landmarker corriendo en WASM dentro de la pestaña. Mide dos cosas:
+
+| Qué | Cómo | Para qué |
+|---|---|---|
+| **Distancia** | El ancho aparente de la cara contra el modelo de cámara estenopeica | Por debajo de 0,5 m, invita |
+| **Giro de cabeza** | La pose 3D que devuelve el propio modelo | De frente **Zinc**, a su derecha **VA 91**, a su izquierda **Ucron** |
+
+> 🔒 **El vídeo no sale de la pestaña.** No se graba, no se sube y no se
+> guarda un solo fotograma: el modelo y el WASM se sirven desde `web/vendor/`,
+> así que la detección funciona con la sala entera sin internet.
+
+### Calibrar el día del montaje
+
+El panel de la esquina muestra **la distancia y el ángulo en vivo**: esa es la
+herramienta. Pon a alguien donde quieras el límite y mira qué número sale.
+Todo se ajusta desde la URL, sin tocar el código:
+
+```
+index.html?cerca=0.6&fov=70&giro=40&invertir=1
+```
+
+- `cerca` — el umbral en metros (por defecto `0.5`).
+- `fov` — el campo de visión de tu webcam en grados (por defecto `60`). **Es el
+  dial que más corrige la distancia**: si todas las lecturas salen cortas o
+  largas por igual, es este.
+- `giro` — los grados que exige el cambio de personaje (por defecto `45`).
+- `invertir=1` — si la derecha y la izquierda salen cambiadas.
+
+La distancia es una **estimación**, no una medida: la anchura de una cara varía
+entre personas (±15 %) y cada webcam tiene su óptica. Para distinguir "pegado"
+de "de paso" basta de sobra, pero calíbralo antes de una inauguración.
+
+### Reglas de convivencia con el chat
+
+Dos decisiones deliberadas, por si sorprenden:
+
+- **Cada visitante empieza de cero.** Al detectar a alguien nuevo se limpia la
+  conversación. Nadie hereda el chat del anterior — aunque los *recuerdos*
+  destilados sí siguen ahí: para eso están.
+- **No se interrumpe a media frase.** Si giras la cabeza mientras el guardián
+  responde, el cambio espera a que termine.
+
+### Lo que aún subiría el listón
+
+La voz del navegador es correcta pero neutra, y un personaje pide timbre
+propio: ahí entran **Piper + la cadena de efectos** (*prototipo en `../clase/`,
+documentado en [VOZ.md](VOZ.md)*). Y en una sala ruidosa, `faster-whisper` en
+local oye mejor que el navegador y no depende de conexión.
 
 ---
 

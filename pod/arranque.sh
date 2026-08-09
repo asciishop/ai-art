@@ -12,7 +12,7 @@ echo "== [1/3] Instalando dependencias (si faltan) =="
 pip install -q vllm >/dev/null 2>&1 || pip install vllm
 pip install -q -r backend/requirements.txt
 
-echo "== [2/3] Levantando vLLM con los 3 LoRAs (puerto 8001) =="
+echo "== [2/3] Levantando vLLM con los 3 LoRAs (puerto 8000) =="
 # Si la imagen arrancó un vLLM por defecto, ocupa la GPU y el nuestro da OOM.
 # Lo matamos y esperamos a que libere la VRAM antes de lanzar el nuestro.
 pkill -f vllm 2>/dev/null || true
