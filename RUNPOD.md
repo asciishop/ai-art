@@ -207,6 +207,9 @@ ollama run va91
 | `NVIDIA driver ... is too old (found 12040)` + `cuda.is_available() → False` | Instalaste torch de **CUDA 13** sobre driver **12.4** | Reinstalar torch con `--index-url` de tu CUDA (§2, paso 3) |
 | `Unsloth cannot find any torch accelerator? You need a GPU.` | Consecuencia del anterior: torch no ve la GPU | Igual que el anterior |
 | `torch.utils._pytree has no attribute 'register_constant'` | `torchao` nuevo sobre torch 2.6 | `pip uninstall -y torchao` (§2, paso 4) |
+| `'Qwen3ForCausalLM' object has no attribute 'set_submodule'` | `nn.Module.set_submodule` existe **desde torch 2.5**; el `transformers` actual lo usa para meter las capas de bitsandbytes | Subir torch (§2, paso 3). Aquí ya no hay parche que valga |
+| `CUDA error: out of memory` al **importar** unsloth | No es tu modelo: la GPU ya está ocupada. En una plantilla vLLM, su propio servidor arrancó solo | `pkill -f vllm` — o corregir el Start Command si vLLM es el PID 1 (ver [`pod/CORRER.md`](pod/CORRER.md) PASO 3) |
+| `python: command not found` | La imagen solo trae `python3` | `ln -sf $(which python3) /usr/local/bin/python` |
 
 > 🎓 **La lección para el aula:** ninguno de estos errores es culpa del código del
 > proyecto. Son **conflictos de versiones**, que es donde se va la mitad del

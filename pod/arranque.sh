@@ -35,18 +35,26 @@ sleep 4
 #
 # CUENTAS DE VRAM con Qwen3-8B (antes eran holgadas con el 3B, ahora no):
 #   pesos en bf16 .................. ~16,4 GB
-#   los 3 LoRA de rank 32 .......... ~0,5 GB
-#   caché KV a 4096 tokens ......... ~0,15 MB por token
-# En una GPU de 24 GB, 0,90 deja ~4 GB de caché: de sobra para una sala con un
-# visitante cada vez. Si ves 'CUDA out of memory', baja a 0.85 o recorta
-# --max-model-len a 2048 antes que tocar nada más.
+#   caché KV ....................... ~0,15 MB por token
+#   CUDA graphs .................... 1-3 GB  <- por eso --enforce-eager
+# En 20 GB (RTX 4000 Ada) esto entra JUSTO: 0.95 y sin graphs. En 24 GB puedes
+# quitar --enforce-eager y bajar a 0.90 para ganar velocidad.
+# Si ves 'No available memory for the cache blocks', añade --kv-cache-dtype fp8
+# y solo como último recurso baja --max-model-len a 2048 (recorta el contexto
+# justo cuando el personaje más lo necesita).
+#
+# --max-loras 1: adaptadores ACTIVOS a la vez en un lote, no registrados. Los
+# tres siguen disponibles; en una sala habla un visitante cada vez.
+# --max-lora-rank 16: el rank con el que entrena train.py. Ponerlo más alto
+# reserva slots del doble de tamaño sin usarlos.
 python -m vllm.entrypoints.openai.api_server \
   --model "$MODELO_BASE" \
   --enable-lora \
-  --max-loras 3 \
-  --max-lora-rank 32 \
+  --max-loras 1 \
+  --max-lora-rank 16 \
   --max-model-len 4096 \
-  --gpu-memory-utilization 0.90 \
+  --gpu-memory-utilization 0.95 \
+  --enforce-eager \
   --port 8000 \
   --lora-modules \
     va91-text=personajes/va91/adapter \

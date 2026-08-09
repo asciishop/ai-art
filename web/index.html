@@ -43,7 +43,13 @@
   /* --- Modo rayos X: enseñar CÓMO se construyó cada respuesta ------------ */
   #xray-btn { margin-left:auto; padding:6px 12px; border-radius:20px; font-size:12px;
               border:1px solid var(--line); background:var(--panel); color:var(--dim); cursor:pointer; }
-  #xray-btn.on { color:#fff; border-color:var(--acc); background:transparent; }
+  /* Activo = fondo lleno, igual que el chip del personaje seleccionado. El
+     cambio sutil de antes era invisible sobre el fondo oscuro y parecía que
+     el botón no respondía. */
+  #xray-btn.on { color:#fff; border-color:transparent; background:var(--acc); }
+  /* Avisos del sistema en el hilo (no los dice el personaje). */
+  .aviso-sis { align-self:center; font-size:12px; color:var(--dim); font-style:italic;
+               border:1px dashed var(--line); border-radius:14px; padding:5px 12px; }
   .xray { align-self:flex-start; max-width:680px; width:100%; font-size:12.5px;
           border:1px solid var(--line); border-left:2px solid var(--acc);
           border-radius:10px; background:#12141c; color:var(--dim); }
@@ -230,7 +236,18 @@ async function enviar() {
 // respuesta. Apagado por defecto — en una sala, el público ve al personaje.
 let xray = false;
 const $xbtn = document.getElementById('xray-btn');
-$xbtn.onclick = () => { xray = !xray; $xbtn.classList.toggle('on', xray); };
+$xbtn.onclick = () => {
+  xray = !xray;
+  $xbtn.classList.toggle('on', xray);
+  $xbtn.textContent = xray ? '🔬 Rayos X activo' : '🔬 Rayos X';
+  // El panel se arma con los datos del turno, así que solo puede aparecer en el
+  // SIGUIENTE mensaje. Sin decirlo, pulsar el botón parece no hacer nada.
+  const d = el('div', 'aviso-sis', xray
+    ? 'Rayos X activado: verás el proceso en la próxima respuesta.'
+    : 'Rayos X desactivado.');
+  $chat.appendChild(d);
+  $chat.scrollTop = $chat.scrollHeight;
+};
 
 function el(tag, cls, txt) {
   const d = document.createElement(tag);
