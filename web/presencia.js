@@ -39,10 +39,15 @@ const CFG = {
                      // falta: hablando se gira la cabeza sin querer, y sin este
                      // margen los personajes se turnarían solos en el borde.
   MIRADA_MS:  1000,  // sostenido, para que un vistazo no cambie de personaje
-  // El reclamo: alguien APARECE en el encuadre, a cualquier distancia, y un
-  // guardián al azar le recita un poema para atraerlo. No hace falta que se
-  // acerque; basta con que la cámara lo vea.
-  APARECER_MS:  700, // visible este rato antes de contar como aparición
+  // EL RECLAMO. No lo dispara una cara, sino MOVIMIENTO: quien pasa de largo
+  // va de perfil, de espaldas o demasiado lejos para que el detector de caras
+  // lo vea. Comparar un fotograma con el anterior no necesita modelo, funciona
+  // a cualquier distancia y con cualquier cosa que cruce el encuadre.
+  MOV_DELTA:    18,  // cuánto tiene que cambiar un píxel (0-255) para contar
+  MOV_UMBRAL: 0.02,  // fracción del encuadre en movimiento que dispara
+  MOV_MAXIMO: 0.75,  // por encima de esto no es alguien: es que cambió la luz
+                     // (se encendió una lámpara, o movieron la cámara)
+  MOV_MS:      300,  // sostenido, para no saltar con un parpadeo del sensor
   POEMA_MS:  90000,  // y luego 90 s de silencio: una sala con paso constante
                      // no puede ser una máquina de recitar. ?poema=0 lo apaga.
   SILENCIO_MS: 700,  // margen tras el altavoz antes de abrir el micro
@@ -61,6 +66,7 @@ if (url.has('fov'))      CFG.FOV_H_GRADOS = parseFloat(url.get('fov'));
 if (url.has('giro'))     CFG.GIRO_GRADOS = parseFloat(url.get('giro'));
 if (url.has('vuelta'))   CFG.VUELTA_GRADOS = parseFloat(url.get('vuelta'));
 if (url.has('poema'))    CFG.POEMA_MS = parseFloat(url.get('poema')) * 1000;
+if (url.has('mov'))      CFG.MOV_UMBRAL = parseFloat(url.get('mov'));
 if (url.has('invertir')) CFG.INVERTIR_GIRO = url.get('invertir') !== '0';
 
 // Puntos de la malla de 478 vértices de MediaPipe que usamos.
@@ -86,9 +92,38 @@ let zonaFirme = 'frente';          // la zona YA en vigor (la del personaje acti
 let finHabla = 0;           // cuándo dejó de sonar el altavoz
 let proximoMicro = 0;       // no insistir con el micrófono más de una vez/seg
 let anterior = 0;           // marca de tiempo del fotograma previo
-let habiaCara = false;      // ya se contó la aparición de quien está ahora
-let tCara = 0;              // cuánto lleva viéndose una cara, a la distancia que sea
+let tMov = 0;               // cuánto lleva habiendo movimiento sostenido
 let ultimoPoema = -Infinity;   // cuándo se recitó el último reclamo
+
+// --- Movimiento: cualquier cosa que cruce el encuadre --------------------
+// Diferencia entre fotogramas consecutivos sobre una miniatura de 64x48. A esa
+// resolución son 3072 píxeles: se compara entero en una fracción de
+// milisegundo, y basta de sobra para saber si algo se movió. No distingue una
+// persona de un perro ni falta que hace: solo queremos saber que pasó ALGO.
+const $lienzo = document.createElement('canvas');
+$lienzo.width = 64;
+$lienzo.height = 48;
+const _ctx = $lienzo.getContext('2d', { willReadFrequently: true });
+let _previo = null;
+
+function movimiento() {
+  const ancho = $lienzo.width, alto = $lienzo.height, n = ancho * alto;
+  _ctx.drawImage($cam, 0, 0, ancho, alto);
+  const px = _ctx.getImageData(0, 0, ancho, alto).data;
+  const luma = new Uint8Array(n);
+  for (let i = 0; i < n; i++) {
+    const j = i << 2;
+    // luma aproximada con enteros: R*0.30 + G*0.59 + B*0.11
+    luma[i] = (px[j] * 77 + px[j + 1] * 150 + px[j + 2] * 29) >> 8;
+  }
+  if (!_previo || _previo.length !== n) { _previo = luma; return 0; }
+  let cambiados = 0;
+  for (let i = 0; i < n; i++) {
+    if (Math.abs(luma[i] - _previo[i]) > CFG.MOV_DELTA) cambiados++;
+  }
+  _previo = luma;
+  return cambiados / n;
+}
 
 // --- Medir ----------------------------------------------------------------
 
@@ -254,20 +289,17 @@ function analizar(ahora) {
   if (estado === 'ausente' && tCerca >= CFG.ENTRAR_MS) { llega(zona || 'frente'); tLejos = 0; }
   else if (estado === 'cerca' && tLejos >= CFG.SALIR_MS) { marcha(); tCerca = 0; }
 
-  // 1b. EL RECLAMO. Distinto de lo anterior: no mira la distancia, solo si hay
-  //     alguien en el encuadre. Alguien que cruza el fondo de la sala también
-  //     cuenta — la idea es atraerlo, no atenderlo.
-  const hayCara = d !== null;
-  tCara = hayCara ? tCara + dt : 0;
-  if (!hayCara) habiaCara = false;          // se fue: la próxima será nueva
-  else if (!habiaCara && tCara >= CFG.APARECER_MS) {
-    habiaCara = true;
-    const lejos = d > CFG.CERCA_M;          // si ya está encima, le toca saludo
-    if (lejos && estado === 'ausente' && CFG.POEMA_MS > 0
-        && !window.Sala.ocupado() && ahora - ultimoPoema > CFG.POEMA_MS) {
-      ultimoPoema = ahora;
-      window.Sala.recitar();
-    }
+  // 1b. EL RECLAMO. No mira la distancia ni exige una cara: cualquier cosa que
+  //     cruce el encuadre vale. Es para el que pasa de largo, no para el que
+  //     ya se paró delante — de ese se ocupa el saludo de arriba.
+  const mov = movimiento();
+  const algoSeMueve = mov > CFG.MOV_UMBRAL && mov < CFG.MOV_MAXIMO;
+  tMov = algoSeMueve ? tMov + dt : 0;
+  if (tMov >= CFG.MOV_MS && estado === 'ausente' && CFG.POEMA_MS > 0
+      && !window.Sala.ocupado() && ahora - ultimoPoema > CFG.POEMA_MS) {
+    ultimoPoema = ahora;
+    tMov = 0;
+    window.Sala.recitar();
   }
 
   // 2. ¿hacia dónde mira? También sostenido en el tiempo.
@@ -285,18 +317,27 @@ function analizar(ahora) {
     window.Sala.escuchar();
   }
 
-  panel(d, g, zona);
+  panel(d, g, zona, mov, ahora);
 }
 
-function panel(d, g, zona) {
+function panel(d, g, zona, mov, ahora) {
+  // El movimiento se muestra SIEMPRE, haya cara o no: es el dial del reclamo y
+  // la única forma de ajustar MOV_UMBRAL sin ir a ciegas. Mira el número con la
+  // sala vacía (debe rondar 0) y con alguien cruzando al fondo.
+  const espera = Math.max(0, Math.ceil((CFG.POEMA_MS - (ahora - ultimoPoema)) / 1000));
+  const linea = 'mov ' + (mov * 100).toFixed(1) + '%'
+              + (mov > CFG.MOV_UMBRAL ? ' ▲' : '  ')
+              + '  (> ' + (CFG.MOV_UMBRAL * 100).toFixed(1) + '%)'
+              + (espera ? '  poema en ' + espera + 's' : '  poema listo');
   if (d === null) {
-    $stat.textContent = 'no veo a nadie';
+    $stat.textContent = 'no veo ninguna cara\n' + linea;
     return;
   }
   const flecha = zona === 'derecha' ? '→' : zona === 'izquierda' ? '←' : '·';
   $stat.textContent =
     (estado === 'cerca' ? '● ' : '○ ') + d.toFixed(2) + ' m  (< ' + CFG.CERCA_M + ')\n'
     + flecha + ' ' + (g >= 0 ? '+' : '') + g.toFixed(0) + '°  ' + zona + '\n'
+    + linea + '\n'
     + (window.Sala.actual() || '—');
 }
 
@@ -349,6 +390,8 @@ async function encender() {
     return;
   }
   arrancando = false;
+  // Sin fotograma previo: el primero de todos no debe contar como movimiento.
+  _previo = null; tMov = 0;
   activo = true; anterior = 0;
   $ojo.classList.add('on');
   avisarGuion();
@@ -362,7 +405,8 @@ function apagar() {
   $cam.srcObject = null;
   $panel.classList.remove('viendo');
   $ojo.classList.remove('on');
-  tCerca = tLejos = 0;
+  tCerca = tLejos = tMov = 0;
+  _previo = null;
 }
 
 $ojo.onclick = () => { activo ? apagar() : encender(); };

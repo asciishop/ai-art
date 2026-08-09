@@ -217,7 +217,7 @@ Ni el backend ni la web se tocan: leen el registro y el personaje aparece solo.
 El visitante no toca nada. Se acerca, y la obra reacciona.
 
 ```
-   aparece a lo lejos  →  un guardián AL AZAR le recita un poema (el reclamo)
+   algo cruza el encuadre →  un guardián AL AZAR recita un poema (el reclamo)
    se acerca a <0,5 m  →  la webcam lo ve  →  el guardián saluda en voz alta
                                            →  el micrófono se abre solo
         habla  →  el modelo piensa y recuerda  →  responde por el altavoz
@@ -228,9 +228,16 @@ El visitante no toca nada. Se acerca, y la obra reacciona.
 ```
 
 **El reclamo** es lo que convierte la obra en algo que llama, no que espera.
-Basta con que la cámara vea una cara —da igual a qué distancia— para que un
-guardián al azar improvise tres o cuatro versos en voz alta. Luego se calla 90
-segundos: una sala con paso constante no puede ser una máquina de recitar.
+Basta con que **algo se mueva** delante de la cámara para que un guardián al
+azar improvise tres o cuatro versos en voz alta. Luego se calla 90 segundos:
+una sala con paso constante no puede ser una máquina de recitar.
+
+> 🔑 **El reclamo NO usa el detector de caras, y es a propósito.** Quien pasa de
+> largo va de perfil, de espaldas o demasiado lejos: pedirle una cara frontal
+> sería no verlo nunca. Se usa **diferencia entre fotogramas** sobre una
+> miniatura de 64×48 — sin modelo, sin coste, y detecta cualquier cosa que
+> cruce. Un cambio que afecte a más del 75 % del encuadre se descarta: eso no
+> es alguien pasando, es que se encendió una luz o se movió la cámara.
 
 > Ese poema **no se archiva**. Es un grito al aire, no un encuentro: guardarlo
 > llenaría la memoria de la obra de conversaciones que nunca ocurrieron. El
@@ -271,6 +278,9 @@ index.html?cerca=0.6&fov=70&giro=25&vuelta=15&invertir=1
 - `giro` — los grados que exigen el cambio de personaje (por defecto `20`).
 - `poema` — segundos de silencio entre reclamos (por defecto `90`). **`?poema=0`
   lo desactiva** — útil en una prueba, o si la sala tiene mucho paso.
+- `mov` — fracción del encuadre que debe moverse para lanzar el reclamo (por
+  defecto `0.02`, o sea un 2 %). El panel muestra el valor en vivo: míralo con
+  la sala vacía (debe rondar 0) y con alguien cruzando al fondo.
 - `vuelta` — los grados por debajo de los cuales se suelta ese lado y se
   regresa al personaje frontal (por defecto `12`). **Tiene que ser menor que
   `giro`**: esa banda muerta es lo que evita que el personaje salte solo
