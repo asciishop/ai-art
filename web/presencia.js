@@ -44,7 +44,12 @@ const CFG = {
   // lo vea. Comparar un fotograma con el anterior no necesita modelo, funciona
   // a cualquier distancia y con cualquier cosa que cruce el encuadre.
   MOV_DELTA:    18,  // cuánto tiene que cambiar un píxel (0-255) para contar
-  MOV_UMBRAL: 0.02,  // fracción del encuadre en movimiento que dispara
+  BORDE_FRAC: 0.25,  // qué parte del ancho, a cada lado, cuenta como BORDE.
+                     // Solo dispara el movimiento de ahí: por los bordes es por
+                     // donde ENTRA quien pasa de largo. Lo que se mueve en el
+                     // centro es quien ya está delante, y ese no necesita que
+                     // lo llamen — necesita que lo escuchen.
+  MOV_UMBRAL: 0.02,  // fracción de la banda de borde en movimiento que dispara
   MOV_MAXIMO: 0.75,  // por encima de esto no es alguien: es que cambió la luz
                      // (se encendió una lámpara, o movieron la cámara)
   MOV_MS:      300,  // sostenido, para no saltar con un parpadeo del sensor
@@ -95,11 +100,18 @@ let anterior = 0;           // marca de tiempo del fotograma previo
 let tMov = 0;               // cuánto lleva habiendo movimiento sostenido
 let ultimoPoema = -Infinity;   // cuándo se recitó el último reclamo
 
-// --- Movimiento: cualquier cosa que cruce el encuadre --------------------
+// --- Movimiento por zonas: ¿entra alguien, o es el que ya estaba? --------
 // Diferencia entre fotogramas consecutivos sobre una miniatura de 64x48. A esa
-// resolución son 3072 píxeles: se compara entero en una fracción de
+// resolución son 3072 píxeles: se compara entera en una fracción de
 // milisegundo, y basta de sobra para saber si algo se movió. No distingue una
 // persona de un perro ni falta que hace: solo queremos saber que pasó ALGO.
+//
+// Se mide por separado en dos zonas, y esa es la clave del reclamo:
+//
+//   |####|            |####|     BORDES  -> alguien ENTRA en el campo de
+//   |####|   centro   |####|                visión. Esto lanza el poema.
+//   |####|            |####|     CENTRO  -> alguien que YA está delante.
+//                                          Ese no se llama, se atiende.
 const $lienzo = document.createElement('canvas');
 $lienzo.width = 64;
 $lienzo.height = 48;
@@ -116,13 +128,20 @@ function movimiento() {
     // luma aproximada con enteros: R*0.30 + G*0.59 + B*0.11
     luma[i] = (px[j] * 77 + px[j + 1] * 150 + px[j + 2] * 29) >> 8;
   }
-  if (!_previo || _previo.length !== n) { _previo = luma; return 0; }
-  let cambiados = 0;
-  for (let i = 0; i < n; i++) {
-    if (Math.abs(luma[i] - _previo[i]) > CFG.MOV_DELTA) cambiados++;
+  if (!_previo || _previo.length !== n) { _previo = luma; return { borde: 0, centro: 0 }; }
+
+  const franja = Math.max(1, Math.round(ancho * CFG.BORDE_FRAC));
+  let camBorde = 0, nBorde = 0, camCentro = 0, nCentro = 0;
+  for (let y = 0; y < alto; y++) {
+    const fila = y * ancho;
+    for (let x = 0; x < ancho; x++) {
+      const cambio = Math.abs(luma[fila + x] - _previo[fila + x]) > CFG.MOV_DELTA;
+      if (x < franja || x >= ancho - franja) { nBorde++; if (cambio) camBorde++; }
+      else { nCentro++; if (cambio) camCentro++; }
+    }
   }
   _previo = luma;
-  return cambiados / n;
+  return { borde: camBorde / nBorde, centro: camCentro / nCentro };
 }
 
 // --- Medir ----------------------------------------------------------------
@@ -289,12 +308,13 @@ function analizar(ahora) {
   if (estado === 'ausente' && tCerca >= CFG.ENTRAR_MS) { llega(zona || 'frente'); tLejos = 0; }
   else if (estado === 'cerca' && tLejos >= CFG.SALIR_MS) { marcha(); tCerca = 0; }
 
-  // 1b. EL RECLAMO. No mira la distancia ni exige una cara: cualquier cosa que
-  //     cruce el encuadre vale. Es para el que pasa de largo, no para el que
-  //     ya se paró delante — de ese se ocupa el saludo de arriba.
+  // 1b. EL RECLAMO. Solo mira los BORDES del encuadre: por ahí es por donde
+  //     entra el que pasa de largo. No exige cara (irá de perfil o de espaldas)
+  //     ni cercanía (estará lejos). Del que ya se paró delante se ocupa el
+  //     saludo de arriba, y de hacia dónde mira, el giro de cabeza.
   const mov = movimiento();
-  const algoSeMueve = mov > CFG.MOV_UMBRAL && mov < CFG.MOV_MAXIMO;
-  tMov = algoSeMueve ? tMov + dt : 0;
+  const entraAlguien = mov.borde > CFG.MOV_UMBRAL && mov.borde < CFG.MOV_MAXIMO;
+  tMov = entraAlguien ? tMov + dt : 0;
   if (tMov >= CFG.MOV_MS && estado === 'ausente' && CFG.POEMA_MS > 0
       && !window.Sala.ocupado() && ahora - ultimoPoema > CFG.POEMA_MS) {
     ultimoPoema = ahora;
@@ -325,10 +345,11 @@ function panel(d, g, zona, mov, ahora) {
   // la única forma de ajustar MOV_UMBRAL sin ir a ciegas. Mira el número con la
   // sala vacía (debe rondar 0) y con alguien cruzando al fondo.
   const espera = Math.max(0, Math.ceil((CFG.POEMA_MS - (ahora - ultimoPoema)) / 1000));
-  const linea = 'mov ' + (mov * 100).toFixed(1) + '%'
-              + (mov > CFG.MOV_UMBRAL ? ' ▲' : '  ')
-              + '  (> ' + (CFG.MOV_UMBRAL * 100).toFixed(1) + '%)'
-              + (espera ? '  poema en ' + espera + 's' : '  poema listo');
+  const linea = 'borde ' + (mov.borde * 100).toFixed(1) + '%'
+              + (mov.borde > CFG.MOV_UMBRAL ? '▲' : ' ')
+              + ' centro ' + (mov.centro * 100).toFixed(1) + '%\n'
+              + (espera ? 'poema en ' + espera + 's' : 'poema listo')
+              + '  (borde > ' + (CFG.MOV_UMBRAL * 100).toFixed(1) + '%)';
   if (d === null) {
     $stat.textContent = 'no veo ninguna cara\n' + linea;
     return;

@@ -217,7 +217,7 @@ Ni el backend ni la web se tocan: leen el registro y el personaje aparece solo.
 El visitante no toca nada. Se acerca, y la obra reacciona.
 
 ```
-   algo cruza el encuadre →  un guardián AL AZAR recita un poema (el reclamo)
+   algo entra por un borde →  un guardián AL AZAR recita un poema (el reclamo)
    se acerca a <0,5 m  →  la webcam lo ve  →  el guardián saluda en voz alta
                                            →  el micrófono se abre solo
         habla  →  el modelo piensa y recuerda  →  responde por el altavoz
@@ -228,9 +228,22 @@ El visitante no toca nada. Se acerca, y la obra reacciona.
 ```
 
 **El reclamo** es lo que convierte la obra en algo que llama, no que espera.
-Basta con que **algo se mueva** delante de la cámara para que un guardián al
-azar improvise tres o cuatro versos en voz alta. Luego se calla 90 segundos:
-una sala con paso constante no puede ser una máquina de recitar.
+Cuando **algo entra por un lateral del encuadre**, un guardián al azar improvisa
+tres o cuatro versos en voz alta para atraerlo. Luego se calla 90 segundos: una
+sala con paso constante no puede ser una máquina de recitar.
+
+Son **dos comportamientos distintos según dónde ocurra el movimiento**, y esa es
+toda la idea:
+
+```
+|####|            |####|    BORDES  → alguien ENTRA en el campo de visión.
+|####|   centro   |####|              Se le recita, para atraerlo.
+|####|            |####|    CENTRO  → alguien que YA está delante.
+                                      A ese no se le llama: se le atiende.
+```
+
+Cuando por fin se acerca a menos de medio metro, el reclamo se apaga y toman el
+relevo el saludo, el micrófono y la detección del giro de cabeza.
 
 > 🔑 **El reclamo NO usa el detector de caras, y es a propósito.** Quien pasa de
 > largo va de perfil, de espaldas o demasiado lejos: pedirle una cara frontal
@@ -278,9 +291,10 @@ index.html?cerca=0.6&fov=70&giro=25&vuelta=15&invertir=1
 - `giro` — los grados que exigen el cambio de personaje (por defecto `20`).
 - `poema` — segundos de silencio entre reclamos (por defecto `90`). **`?poema=0`
   lo desactiva** — útil en una prueba, o si la sala tiene mucho paso.
-- `mov` — fracción del encuadre que debe moverse para lanzar el reclamo (por
-  defecto `0.02`, o sea un 2 %). El panel muestra el valor en vivo: míralo con
-  la sala vacía (debe rondar 0) y con alguien cruzando al fondo.
+- `mov` — fracción de las **bandas laterales** que debe moverse para lanzar el
+  reclamo (por defecto `0.02`). El panel muestra `borde` y `centro` en vivo:
+  míralos con la sala vacía (los dos cerca de 0) y con alguien cruzando por un
+  lado (`borde` debe dispararse y `centro` quedarse bajo).
 - `vuelta` — los grados por debajo de los cuales se suelta ese lado y se
   regresa al personaje frontal (por defecto `12`). **Tiene que ser menor que
   `giro`**: esa banda muerta es lo que evita que el personaje salte solo
