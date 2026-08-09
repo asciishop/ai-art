@@ -24,7 +24,7 @@ import chromadb
 import httpx
 from chromadb.utils import embedding_functions
 from fastapi import FastAPI, HTTPException
-from fastapi.responses import StreamingResponse, FileResponse
+from fastapi.responses import StreamingResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -32,6 +32,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(
 import registro  # noqa: E402
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import memoria  # noqa: E402  (memoria que ESCRIBE: SQLite + experiencias)
+import voz      # noqa: E402  (síntesis local + efectos: la voz de la obra)
 
 # --- Config --------------------------------------------------------------
 VLLM_URL = os.environ.get("VLLM_URL", "http://localhost:8000/v1/chat/completions")
@@ -208,6 +209,53 @@ class ChatIn(BaseModel):
     rayosx: bool = False  # modo didáctico: además de responder, cuenta CÓMO
                           # (ver /api/chat). Apagado por defecto: en una sala
                           # el público solo debe ver al personaje.
+
+
+class VozIn(BaseModel):
+    personaje: str
+    texto: str
+    sintonia: bool = False   # ráfaga de estática antes: solo en la 1ª frase
+
+
+@app.get("/api/voz/estado")
+def voz_estado():
+    """¿Hay voz sintetizada, o la web tiene que usar la del navegador?
+
+    La consulta el navegador al arrancar. Si aquí falta piper o pedalboard, la
+    obra no se queda muda: cae a la Web Speech API, que suena a locutor pero
+    suena. Preferimos una sala con voz plana a una sala en silencio.
+    """
+    ok, motivo = voz.disponible()
+    return {"disponible": ok, "motivo": motivo}
+
+
+@app.post("/api/voz")
+def voz_sintetizar(entrada: VozIn):
+    """Texto -> WAV con la voz del personaje ya procesada.
+
+    Es 'def' y no 'async def' a propósito: Piper y pedalboard son CPU pura y
+    bloqueante. Starlette lleva las rutas síncronas a un hilo aparte, así que
+    sintetizar no congela el streaming del chat que va en paralelo.
+    """
+    try:
+        pers = registro.personaje(entrada.personaje)
+    except KeyError:
+        raise HTTPException(404, "Personaje desconocido")
+    ok, motivo = voz.disponible()
+    if not ok:
+        raise HTTPException(503, motivo)
+    texto = (entrada.texto or "").strip()
+    if not texto:
+        raise HTTPException(400, "Sin texto")
+    try:
+        wav = voz.sintetizar(texto,
+                             modelo=pers.voz_modelo,
+                             lejania=pers.voz_lejania,
+                             androide=pers.voz_androide,
+                             sintonia=entrada.sintonia)
+    except Exception as e:
+        raise HTTPException(500, f"{type(e).__name__}: {e}")
+    return Response(content=wav, media_type="audio/wav")
 
 
 @app.get("/api/personajes")

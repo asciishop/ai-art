@@ -134,11 +134,11 @@ function zonaDe(g, desde) {
 
 // --- Reaccionar -----------------------------------------------------------
 
-function invitar(texto) {
+function invitar(texto, ms) {
   $inv.textContent = texto;
   $inv.classList.add('ver');
   clearTimeout(invitar.t);
-  invitar.t = setTimeout(() => $inv.classList.remove('ver'), 6000);
+  invitar.t = setTimeout(() => $inv.classList.remove('ver'), ms || 6000);
 }
 
 /** Reservar el micrófono mientras el personaje arranca su saludo.
@@ -169,11 +169,18 @@ function marcha() {
   $panel.classList.remove('cerca');
   zonaVista = null; tZona = 0; zonaFirme = 'frente';
   window.Sala.cortarEscucha();
-  window.Sala.callar();
+  // parar() y no callar(): si se marchó a media respuesta, se aborta también la
+  // generación. Antes la obra terminaba de hablarle a una sala vacía.
+  window.Sala.parar();
   $inv.classList.remove('ver');
 }
 
-/** Ha girado la cabeza hacia otro guardián. */
+/** Ha girado la cabeza hacia otro guardián.
+ *
+ * En silencio y a propósito: quien gira la cabeza YA está conversando, y no
+ * necesita que le den la bienvenida otra vez. El relevo se nota en el color de
+ * la sala y en el rótulo; el guardián nuevo simplemente queda a la escucha.
+ */
 function cambia(zona) {
   const id = CFG.QUIEN[zona];
   if (!id) return;
@@ -183,10 +190,12 @@ function cambia(zona) {
   if (window.Sala.generando() || window.Sala.hablando()) return;
   window.Sala.cortarEscucha();   // lo dictado era para el otro personaje
   zonaFirme = zona;
-  window.Sala.elegir(id);
-  invitar('Ahora te escucha ' + window.Sala.nombre(id).split('—')[0].trim() + '.');
-  dejarleHablar();
-  window.Sala.saludar();
+  window.Sala.elegir(id, true);  // 'discreto': sin saludo escrito
+  // Rótulo corto: con el umbral en 20° los relevos son frecuentes y un cartel
+  // de seis segundos estaría casi siempre encima.
+  invitar('Te escucha ' + window.Sala.nombre(id).split('—')[0].trim(), 2200);
+  // Sin dejarleHablar(): no hay nada que suene, así que el micrófono puede
+  // abrirse en el siguiente ciclo en vez de esperar a un saludo que no llega.
 }
 
 // --- El bucle -------------------------------------------------------------

@@ -64,6 +64,13 @@
   #enviar { padding:0 22px; border-radius:24px; border:none; background:var(--acc); color:#fff;
             font-size:15px; cursor:pointer; }
   #enviar:disabled { opacity:.4; cursor:default; }
+  /* Parar: solo existe mientras el personaje genera o habla. */
+  #parar { padding:0 20px; border-radius:24px; border:1px solid #c0392b;
+           background:transparent; color:#e8756a; font-size:14px; cursor:pointer; }
+  #parar:hover { background:#c0392b; color:#fff; }
+  #parar[hidden] { display:none; }
+  /* respuesta cortada a media frase */
+  .bot.cortado::after { content:' ⏹'; color:#e8756a; font-size:12px; }
   /* micrófono: hablarle al personaje en vez de escribirle */
   #mic { flex:none; width:46px; border-radius:50%; border:1px solid var(--line);
          background:var(--panel); color:var(--dim); font-size:17px; cursor:pointer; }
@@ -170,6 +177,7 @@
     <input id="entrada" placeholder="Escribe tu mensaje… o pulsa el micrófono" autocomplete="off" disabled>
     <button id="mic" title="Habla en vez de escribir" disabled>🎤</button>
     <button id="enviar" disabled>Enviar</button>
+    <button id="parar" title="Corta la respuesta (o di «para»)" hidden>⏹ Parar</button>
   </footer>
 
 <script>
@@ -178,6 +186,7 @@ const $sel = document.getElementById('selector');
 const $inp = document.getElementById('entrada');
 const $btn = document.getElementById('enviar');
 const $mic = document.getElementById('mic');
+const $parar = document.getElementById('parar');
 const $escena = document.getElementById('escena');
 const $xcont = document.getElementById('xray-cont');
 let generando = false;   // el personaje está redactando su respuesta
@@ -203,7 +212,9 @@ fetch('/api/personajes').then(r => r.json()).then(ps => {
   if (ps.length) elegir(ps[0]);
 });
 
-function elegir(p) {
+// 'discreto': cambia de personaje sin anunciarlo. Lo usa el giro de cabeza —
+// ahí el visitante ya está conversando y una bienvenida solo estorba.
+function elegir(p, discreto) {
   actual = p; historial = [];
   document.documentElement.style.setProperty('--acc', p.color || '#5B8BF0');
   [...$sel.children].forEach(c => {
@@ -211,7 +222,9 @@ function elegir(p) {
     c.classList.toggle('sel', on);
     c.style.background = on ? (p.color || '#5B8BF0') : '';
   });
-  $chat.innerHTML = `<div id="saludo">${p.saludo || ''}</div>`;
+  // El historial SÍ se vacía siempre: el turno anterior era de otro personaje
+  // y mandárselo a este le metería en la boca palabras que no son suyas.
+  $chat.innerHTML = discreto ? '' : `<div id="saludo">${p.saludo || ''}</div>`;
   controles(true); $inp.focus();
 }
 
@@ -228,24 +241,34 @@ async function enviar() {
   $inp.value = ''; controles(false); generando = true;
   burbuja('user', texto);
   const bot = burbuja('bot pending');
-  let acumulado = '', panel = null, cerrado = false;
+  let acumulado = '', panel = null, cerrado = false, cortado = false;
+
+  // Abortar el fetch cierra la conexión, el backend ve que el cliente se fue y
+  // deja de pedirle tokens a vLLM. Parar de verdad, no solo dejar de mostrar.
+  const ctrl = new AbortController();
+  pararTurno = () => { cortado = true; ctrl.abort(); terminar(); };
+  modoParar(true);
 
   // Se llama en cuanto el personaje calla. En rayos X el stream sigue abierto
   // un poco más (destilando el recuerdo), pero la interfaz ya se libera.
   function terminar() {
     if (cerrado) return;
-    cerrado = true; generando = false;
+    cerrado = true; generando = false; pararTurno = null;
     bot.classList.remove('pending');
+    if (cortado) bot.classList.add('cortado');
     historial.push({ role:'user', content: texto });
     historial.push({ role:'assistant', content: acumulado });
     controles(true); $inp.focus();
     // Voz: síntesis del NAVEGADOR (Web Speech API). Instantánea, gratis, local.
-    if (acumulado.trim()) hablar(acumulado);
+    // Si lo cortaron, no se lee en alto lo que ya no se quería oír.
+    if (!cortado && acumulado.trim()) hablar(acumulado);
+    else modoParar(false);
   }
 
   try {
     const r = await fetch('/api/chat', {
       method:'POST', headers:{'Content-Type':'application/json'},
+      signal: ctrl.signal,
       body: JSON.stringify({ personaje: actual.id, mensaje: texto, historial, rayosx: xray })
     });
     const reader = r.body.getReader();
@@ -278,7 +301,10 @@ async function enviar() {
       }
     }
   } catch (e) {
-    bot.textContent = '[La señal se perdió. Revisa que el backend y vLLM estén activos.]';
+    // AbortError no es un fallo: es que alguien dijo «para».
+    if (e.name !== 'AbortError') {
+      bot.textContent = '[La señal se perdió. Revisa que el backend y vLLM estén activos.]';
+    }
   }
   terminar();
 }
@@ -475,9 +501,100 @@ function vozEspanol() {
 // Algunos navegadores cargan las voces de forma asíncrona.
 if ('speechSynthesis' in window) speechSynthesis.onvoiceschanged = () => {};
 
-function hablar(texto) {
-  if (!('speechSynthesis' in window)) return;   // navegador sin soporte
-  callar();                                      // corta lo anterior
+// --- LA VOZ ---------------------------------------------------------------
+// Dos motores. El bueno es el del POD: Piper + la cadena de efectos, que es la
+// única forma de que suene a máquina que transmite desde otro sitio — la voz
+// del navegador NO se puede procesar (va directa a la tarjeta de sonido, no
+// hay nodo de audio que interceptar). El del navegador queda de red: si el pod
+// no tiene piper instalado, la obra habla plano pero habla.
+let vozServidor = null;   // null = aún no se sabe; true/false = ya se preguntó
+let vozActual = null;     // locución del navegador en curso
+let vozAudio = null;      // <audio> del pod en curso
+let vozAbort = null;      // para cortar la cola de frases a media respuesta
+let vozSonando = false;
+
+fetch('/api/voz/estado').then(r => r.json())
+  .then(e => { vozServidor = !!e.disponible;
+               if (!e.disponible) console.info('Voz del pod no disponible:', e.motivo); })
+  .catch(() => { vozServidor = false; });
+
+/** Parte en frases y junta las muy cortas.
+ *
+ * Se sintetiza frase a frase para que la primera empiece a sonar mientras el
+ * pod prepara la siguiente. Sin esto habría que esperar a procesar la respuesta
+ * entera, que con un 8B es una eternidad delante de una obra.
+ * Las frases sueltas de dos palabras se agrupan: mandarlas solas al TTS suena
+ * entrecortado.
+ */
+function partirFrases(texto, minimo = 30) {
+  const trozos = texto.replace(/\s+/g, ' ').trim().split(/(?<=[.!?…:])\s+/);
+  const frases = [];
+  for (const t of trozos) {
+    if (frases.length && frases[frases.length - 1].length < minimo) frases[frases.length - 1] += ' ' + t;
+    else frases.push(t);
+  }
+  return frases.filter(f => /[a-zA-ZÀ-ÿ0-9]/.test(f));
+}
+
+async function hablar(texto) {
+  callar();
+  if (vozServidor === null) {          // aún no llegó el estado: se espera poco
+    for (let i = 0; i < 20 && vozServidor === null; i++) await new Promise(r => setTimeout(r, 100));
+  }
+  if (!vozServidor) return hablarNavegador(texto);
+
+  const frases = partirFrases(texto);
+  if (!frases.length) return modoParar(false);
+  const ctrl = new AbortController();
+  vozAbort = ctrl;
+  vozSonando = true;
+  try {
+    // Se pide la frase siguiente MIENTRAS suena la actual: el pod sintetiza en
+    // paralelo a la reproducción y no se nota la costura.
+    let pedido = pedirVoz(frases[0], true, ctrl.signal);
+    for (let i = 0; i < frases.length; i++) {
+      const blob = await pedido;
+      if (ctrl.signal.aborted) return;
+      pedido = i + 1 < frases.length ? pedirVoz(frases[i + 1], false, ctrl.signal) : null;
+      await sonar(blob, ctrl.signal);
+    }
+  } catch (e) {
+    if (e.name === 'AbortError') return;          // lo cortaron: normal
+    vozServidor = false;                          // el pod falló: a la red
+    console.warn('Voz del pod caída, sigo con la del navegador:', e.message);
+    return hablarNavegador(texto);
+  } finally {
+    vozSonando = false;
+    if (vozAbort === ctrl) { vozAbort = null; if (!ctrl.signal.aborted) modoParar(false); }
+  }
+}
+
+function pedirVoz(frase, sintonia, signal) {
+  return fetch('/api/voz', {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, signal,
+    body: JSON.stringify({ personaje: actual.id, texto: frase, sintonia })
+  }).then(r => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.blob(); });
+}
+
+function sonar(blob, signal) {
+  return new Promise((resolver, rechazar) => {
+    const url = URL.createObjectURL(blob);
+    const a = new Audio(url);
+    vozAudio = a;
+    const limpiar = () => { URL.revokeObjectURL(url); if (vozAudio === a) vozAudio = null; };
+    // Un fallo de una frase no debe tumbar el resto de la respuesta.
+    a.onended = () => { limpiar(); resolver(); };
+    a.onerror = () => { limpiar(); resolver(); };
+    signal.addEventListener('abort', () => {
+      a.pause(); limpiar(); rechazar(new DOMException('cortado', 'AbortError'));
+    }, { once: true });
+    a.play().catch(() => { limpiar(); resolver(); });
+  });
+}
+
+// La red: síntesis del NAVEGADOR. Instantánea y gratis, pero suena a locutor.
+function hablarNavegador(texto) {
+  if (!('speechSynthesis' in window)) return modoParar(false);
   const u = new SpeechSynthesisUtterance(texto);
   const v = vozEspanol();
   if (v) u.voice = v;
@@ -485,16 +602,25 @@ function hablar(texto) {
   // pitch/rate por personaje: diferencian el timbre (vienen del registro)
   u.pitch = (actual && actual.voz_pitch) || 1.0;
   u.rate  = (actual && actual.voz_rate)  || 1.0;
+  // Se comprueba la identidad porque una locución CANCELADA también dispara
+  // onend, y esa no debe apagar el turno que viene detrás.
+  u.onend = u.onerror = () => { if (u === vozActual) modoParar(false); };
+  vozActual = u;
   speechSynthesis.speak(u);
 }
 
 // Hacerle callar. Importante antes de escuchar: si el altavoz sigue sonando,
 // el micrófono recoge al personaje y acabaría conversando consigo mismo.
 function callar() {
+  vozActual = null;
   if ('speechSynthesis' in window) speechSynthesis.cancel();
+  if (vozAbort) { vozAbort.abort(); vozAbort = null; }
+  if (vozAudio) { vozAudio.pause(); vozAudio = null; }
+  vozSonando = false;
 }
 function hablando() {
-  return 'speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending);
+  return vozSonando
+      || ('speechSynthesis' in window && (speechSynthesis.speaking || speechSynthesis.pending));
 }
 
 // --- OÍDO: hablarle en vez de escribirle ---------------------------------
@@ -560,9 +686,77 @@ if (!SR) {
   $mic.onclick = () => { oyendo ? rec.stop() : escuchar(); };
 }
 
+// --- «PARA» — cortar una respuesta demasiado larga ----------------------
+// Mientras el personaje habla, el micrófono de dictado está cerrado (si no,
+// se oiría a sí mismo). Así que la orden de parar la escucha un SEGUNDO
+// reconocedor, que solo vive durante el turno y solo busca estas palabras.
+const PALABRAS_PARAR = ['para', 'pare'];   // añade aquí 'basta', 'stop'…
+
+let pararTurno = null;      // lo pone enviar(); null = no hay nada que cortar
+let vigia = null, vigilando = false;
+
+/** ¿Lo que se oyó ES la orden, o solo la contiene? */
+function esOrdenDeParar(texto) {
+  // Sin acentos que valgan: 'para' y 'pare' no los llevan, asi que basta
+  // con bajar a minusculas y dejar solo letras y espacios.
+  const limpio = texto.toLowerCase().replace(/[^a-z ]/g, ' ').trim();
+  const palabras = limpio.split(/\s+/).filter(Boolean);
+  // Solo cuenta si la orden es TODO lo dicho. En español "para" aparece a cada
+  // paso ("para ti", "para que"), y el propio personaje lo dirá por el altavoz.
+  // Exigiendo que la frase entera sea la orden, esas apariciones no disparan.
+  return palabras.length > 0 && palabras.length <= 2
+      && palabras.every(p => PALABRAS_PARAR.includes(p));
+}
+
+function vigilar(si) {
+  if (!SR) return;
+  if (si) {
+    if (vigilando) return;
+    if (!vigia) {
+      vigia = new SR();
+      vigia.lang = 'es-ES';
+      vigia.continuous = true;
+      // Solo resultados FINALES. Con los provisionales bastaría con que el
+      // personaje empezara una frase por "Para…" para cortarse a sí mismo.
+      // Cuesta cerca de un segundo de reacción y evita ese ridículo.
+      vigia.interimResults = false;
+      vigia.onresult = e => {
+        for (let i = e.resultIndex; i < e.results.length; i++) {
+          if (esOrdenDeParar(e.results[i][0].transcript)) { parar(); return; }
+        }
+      };
+      vigia.onerror = () => {};
+      // El reconocedor se corta solo cada pocos segundos: se relanza mientras
+      // siga habiendo algo que vigilar.
+      vigia.onend = () => { if (vigilando) { try { vigia.start(); } catch (e) {} } };
+    }
+    vigilando = true;
+    try { vigia.start(); } catch (e) {}
+  } else {
+    vigilando = false;
+    if (vigia) { try { vigia.abort(); } catch (e) {} }
+  }
+}
+
+/** Muestra el botón de parar y pone el oído, o lo retira todo. */
+function modoParar(si) {
+  $parar.hidden = !si;
+  vigilar(si);
+}
+
+/** Cortar: primero el altavoz (instantáneo), luego la generación. */
+function parar() {
+  callar();
+  if (pararTurno) pararTurno();
+  modoParar(false);
+}
+
+$parar.onclick = parar;
+
 // Abrir el micrófono. La usan el botón 🎤 y, sola, la detección de presencia.
 function escuchar() {
   if (!rec || oyendo || $mic.disabled) return false;
+  vigilar(false);   // los dos reconocedores no pueden compartir el micrófono
   callar();
   dictado = ''; $inp.value = ''; $inp.placeholder = PLACEHOLDER;
   try { rec.start(); } catch (e) { return false; }  // ya arrancando: ignorar
@@ -581,7 +775,11 @@ function cortarEscucha() {
 window.Sala = {
   actual:   () => actual && actual.id,
   ids:      () => personajes.map(p => p.id),
-  elegir:   id => { const p = personajes.find(x => x.id === id); if (p) elegir(p); return !!p; },
+  elegir:   (id, discreto) => {
+    const p = personajes.find(x => x.id === id);
+    if (p) elegir(p, discreto);
+    return !!p;
+  },
   nombre:   id => { const p = personajes.find(x => x.id === id); return p ? p.nombre : id; },
   listos:   () => personajes.length > 0,
   ocupado:  () => generando || oyendo || hablando(),
@@ -594,6 +792,7 @@ window.Sala = {
   escuchar,
   cortarEscucha,
   callar,
+  parar,     // corta generación Y voz: lo usa la presencia si el visitante se va
 };
 
 $btn.onclick = enviar;

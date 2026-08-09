@@ -6,4 +6,9 @@ pydantic>=2.0
 pyyaml>=6.0
 chromadb>=0.5.0
 sentence-transformers>=3.0.0
+# Voz de la obra: síntesis local (Piper) + cadena de efectos (pedalboard).
+# Ambas son CPU. Si fallan al instalar, la plataforma NO se rompe: /api/voz
+# devuelve 503 y la web cae sola a la voz del navegador (plana, pero suena).
+piper-tts>=1.2
+pedalboard>=0.9
 # vLLM se instala aparte en el pod (necesita la GPU): pip install vllm

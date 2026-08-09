@@ -37,7 +37,12 @@ class Personaje:
     trigger: str
     saludo: str
     color: str
-    # --- voz (síntesis del navegador · Web Speech API) · opcionales ---
+    # --- voz sintetizada en el pod (Piper + efectos, backend/voz.py) ---
+    voz_modelo: str = ""        # voz de Piper; "" = la de por defecto
+    voz_androide: float = 0.75  # 0-1: cuánta máquina (armónicos inarmónicos)
+    voz_lejania: float = 0.35   # 0-1: cuánta transmisión rota. Ojo: por encima
+                                # de 0.8 se pierde inteligibilidad.
+    # --- voz del navegador (Web Speech API) · solo si falla la de arriba ---
     voz_pitch: float = 1.0    # tono: <1 grave, >1 agudo. Diferencia personajes.
     voz_rate: float = 1.0     # velocidad: <1 lento, >1 rápido.
 
