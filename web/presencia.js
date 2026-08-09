@@ -60,10 +60,13 @@ const CFG = {
   FOV_H_GRADOS:  60,    // campo de visión horizontal típico de una webcam
   INVERTIR_GIRO: false, // si en la sala sale al revés, ponlo a true (o ?invertir=1)
   FPS: 8,               // 8 análisis por segundo sobran y no calientan el equipo
-  // Qué cámara usar. Vacío = la primera que NO parezca integrada, que en un
-  // portátil con webcam USB enchufada es justo la USB. Se puede forzar con
-  // ?cam=<trozo del nombre> o ?cam=<índice>, y queda guardado en el navegador.
-  CAMARA: '',
+  // Qué cámara usar. Cuatro formas, y se puede forzar con ?cam=… :
+  //   'integrada'  la del propio equipo  <- por defecto
+  //   'usb'        la primera que NO sea la integrada
+  //   'logitech'   cualquier trozo del nombre del dispositivo
+  //   '1'          por índice en la lista
+  // La elección queda guardada en el navegador.
+  CAMARA: 'integrada',
   // El guion de la sala. Cambiar de personaje es cambiar esta línea.
   QUIEN: { frente: 'zinc', derecha: 'va91', izquierda: 'ucron' },
 };
@@ -82,7 +85,8 @@ if (url.has('cam')) {
   CFG.CAMARA = url.get('cam');
   try { localStorage.setItem('camara', CFG.CAMARA); } catch (e) {}
 } else {
-  try { CFG.CAMARA = localStorage.getItem('camara') || ''; } catch (e) {}
+  // Si no hay nada guardado se conserva el valor por defecto de CFG, no ''.
+  try { CFG.CAMARA = localStorage.getItem('camara') || CFG.CAMARA; } catch (e) {}
 }
 if (url.has('invertir')) CFG.INVERTIR_GIRO = url.get('invertir') !== '0';
 
@@ -397,18 +401,25 @@ async function elegirCamara() {
   console.info('Cámaras disponibles:',
     camaras.map((c, i) => `[${i}] ${c.label || '(sin permiso aún)'}`).join(' · '));
 
+  // Los nombres varían mucho entre fabricantes, así que 'integrada'/'usb' son
+  // una heurística sobre la etiqueta. Si acierta mal, se fuerza por nombre o
+  // por índice —eso sí es exacto— y queda guardado.
+  const ESINTEGRADA = /integrat|built.?in|internal|facetime|surface|hd user|webcam interna/i;
   const pref = (CFG.CAMARA || '').trim().toLowerCase();
+
+  if (pref === 'integrada') {
+    return camaras.find(c => ESINTEGRADA.test(c.label || '')) || camaras[0];
+  }
+  if (pref === 'usb' || pref === 'externa') {
+    return camaras.find(c => c.label && !ESINTEGRADA.test(c.label)) || camaras[0];
+  }
   if (pref) {
     if (/^\d+$/.test(pref)) return camaras[Math.min(+pref, camaras.length - 1)];
     const m = camaras.find(c => (c.label || '').toLowerCase().includes(pref));
     if (m) return m;
-    console.warn(`Ninguna cámara contiene "${pref}"; uso la de por defecto.`);
+    console.warn(`Ninguna cámara contiene "${pref}"; uso la primera de la lista.`);
   }
-  // Por defecto, la primera que NO parezca la del propio equipo. Los nombres
-  // varían mucho entre fabricantes, así que esto es una heurística: si falla,
-  // se fuerza con ?cam= y queda guardado.
-  const integrada = /integrat|built.?in|internal|facetime|surface|hd user|webcam interna/i;
-  return camaras.find(c => c.label && !integrada.test(c.label)) || camaras[0];
+  return camaras[0];
 }
 
 let arrancando = false;
