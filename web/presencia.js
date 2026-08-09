@@ -6,7 +6,7 @@
  *   ¿HAY ALGUIEN CERCA?   A menos de 0,5 m la obra saluda en voz alta y abre
  *                         el micrófono sola. El visitante no toca nada.
  *   ¿HACIA DÓNDE MIRA?    De frente responde Zinc. Si gira la cabeza a su
- *                         derecha 45° o más, VA 91. A su izquierda, Ucron.
+ *                         derecha 20° o más, VA 91. A su izquierda, Ucron.
  *
  * El vídeo NO se graba ni se envía a ningún sitio: MediaPipe corre en WASM
  * dentro del navegador y los ficheros están servidos desde web/vendor/. Sin
@@ -33,7 +33,11 @@ const CFG = {
                      // límite encendería y apagaría la obra sin parar)
   ENTRAR_MS:   600,  // hay que sostener la cercanía este rato (no un cruce)
   SALIR_MS:   2500,  // y la ausencia este otro (no un giro momentáneo)
-  GIRO_GRADOS:  45,  // el ángulo que pide el guion
+  GIRO_GRADOS:  20,  // girar la cabeza esto (a un lado u otro) cambia de personaje
+  VUELTA_GRADOS: 12, // y hay que volver POR DEBAJO de esto para soltar ese lado.
+                     // Es la misma histéresis que CERCA_M/LEJOS_M, y a 20° hace
+                     // falta: hablando se gira la cabeza sin querer, y sin este
+                     // margen los personajes se turnarían solos en el borde.
   MIRADA_MS:  1000,  // sostenido, para que un vistazo no cambie de personaje
   SILENCIO_MS: 700,  // margen tras el altavoz antes de abrir el micro
   ANCHO_CARA_M: 0.145,  // anchura media de una cara adulta, sien a sien
@@ -49,6 +53,7 @@ if (url.has('cerca'))    CFG.CERCA_M = parseFloat(url.get('cerca'));
 if (url.has('lejos'))    CFG.LEJOS_M = parseFloat(url.get('lejos'));
 if (url.has('fov'))      CFG.FOV_H_GRADOS = parseFloat(url.get('fov'));
 if (url.has('giro'))     CFG.GIRO_GRADOS = parseFloat(url.get('giro'));
+if (url.has('vuelta'))   CFG.VUELTA_GRADOS = parseFloat(url.get('vuelta'));
 if (url.has('invertir')) CFG.INVERTIR_GIRO = url.get('invertir') !== '0';
 
 // Puntos de la malla de 478 vértices de MediaPipe que usamos.
@@ -69,6 +74,8 @@ let ultimoT = 0;       // timestamp del último análisis (MediaPipe lo exige cr
 let estado = 'ausente';     // ausente | cerca
 let tCerca = 0, tLejos = 0; // milisegundos acumulados cumpliendo cada condición
 let zonaVista = null, tZona = 0;   // hacia dónde mira, y desde cuándo
+let zonaFirme = 'frente';          // la zona YA en vigor (la del personaje activo);
+                                   // es la referencia de la histéresis de giro
 let finHabla = 0;           // cuándo dejó de sonar el altavoz
 let proximoMicro = 0;       // no insistir con el micrófono más de una vez/seg
 let anterior = 0;           // marca de tiempo del fotograma previo
@@ -110,9 +117,18 @@ function giro(matriz) {
   return CFG.INVERTIR_GIRO ? -g : g;
 }
 
-function zonaDe(g) {
-  if (g >=  CFG.GIRO_GRADOS) return 'derecha';
-  if (g <= -CFG.GIRO_GRADOS) return 'izquierda';
+/** En qué zona cae el giro, contando desde dónde estábamos.
+ *
+ * Cuesta más ENTRAR en un lado (GIRO_GRADOS) que quedarse en él: para volver al
+ * frente hay que bajar de VUELTA_GRADOS. Sin esa banda muerta, quien se quede
+ * hablando justo en el límite haría saltar el personaje una y otra vez.
+ */
+function zonaDe(g, desde) {
+  const entrar = CFG.GIRO_GRADOS, soltar = CFG.VUELTA_GRADOS;
+  if (desde === 'derecha'   && g >   soltar) return 'derecha';
+  if (desde === 'izquierda' && g <  -soltar) return 'izquierda';
+  if (g >=  entrar) return 'derecha';
+  if (g <= -entrar) return 'izquierda';
   return 'frente';
 }
 
@@ -140,6 +156,7 @@ function llega(zona) {
   estado = 'cerca';
   $panel.classList.add('cerca');
   const id = CFG.QUIEN[zona] || CFG.QUIEN.frente;
+  zonaFirme = zona;
   window.Sala.elegir(id);   // esto ya limpia el chat: cada visitante empieza de cero
   invitar('Te veo. Háblame.');
   dejarleHablar();
@@ -150,7 +167,7 @@ function llega(zona) {
 function marcha() {
   estado = 'ausente';
   $panel.classList.remove('cerca');
-  zonaVista = null; tZona = 0;
+  zonaVista = null; tZona = 0; zonaFirme = 'frente';
   window.Sala.cortarEscucha();
   window.Sala.callar();
   $inv.classList.remove('ver');
@@ -159,11 +176,13 @@ function marcha() {
 /** Ha girado la cabeza hacia otro guardián. */
 function cambia(zona) {
   const id = CFG.QUIEN[zona];
-  if (!id || id === window.Sala.actual()) return;
+  if (!id) return;
+  if (id === window.Sala.actual()) { zonaFirme = zona; return; }
   // No se interrumpe a alguien a media frase: si está respondiendo, el cambio
   // espera (la zona sigue medida, así que entrará en cuanto quede libre).
   if (window.Sala.generando() || window.Sala.hablando()) return;
   window.Sala.cortarEscucha();   // lo dictado era para el otro personaje
+  zonaFirme = zona;
   window.Sala.elegir(id);
   invitar('Ahora te escucha ' + window.Sala.nombre(id).split('—')[0].trim() + '.');
   dejarleHablar();
@@ -197,7 +216,7 @@ function analizar(ahora) {
   if (puntos && matriz) {
     g = giro(matriz);
     d = distancia(puntos, g, $cam.videoWidth, $cam.videoHeight);
-    zona = zonaDe(g);
+    zona = zonaDe(g, zonaFirme);
   }
 
   // 1. ¿cerca o lejos? Se acumula tiempo, no fotogramas sueltos.

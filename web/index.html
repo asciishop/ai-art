@@ -16,7 +16,41 @@
           color:var(--txt); cursor:pointer; font-size:13px; transition:all .15s; }
   .chip:hover { border-color:var(--acc); }
   .chip.sel { color:#fff; border-color:transparent; }
+  /* --- Escena: chat y rayos X en dos columnas -------------------------- */
+  /* Cuatro vistas, en el atributo data-vista de #escena:
+       solo   sin rayos X: el chat ocupa todo y sin cabeceras (modo sala)
+       ambos  las dos columnas al 50 %
+       chat   el chat ampliado a pantalla completa
+       xray   los rayos X ampliados a pantalla completa                    */
+  #escena { flex:1; display:flex; min-height:0; }
+  .col { flex:1 1 50%; display:flex; flex-direction:column; min-width:0; min-height:0; }
+  #col-xray { display:none; border-left:1px solid var(--line); }
+  #escena[data-vista="ambos"] #col-xray,
+  #escena[data-vista="xray"]  #col-xray { display:flex; }
+  #escena[data-vista="xray"]  #col-chat { display:none; }
+  #escena[data-vista="solo"]  #col-chat > .cab { display:none; }
+  /* cabecera de cada columna, con su botón de ampliar */
+  .cab { display:flex; align-items:center; gap:8px; padding:7px 14px; flex:none;
+         border-bottom:1px solid var(--line); background:var(--panel);
+         font-size:11px; color:var(--dim); letter-spacing:.6px; text-transform:uppercase; }
+  .cab button { margin-left:auto; padding:2px 9px; border-radius:6px; cursor:pointer;
+                border:1px solid var(--line); background:transparent; color:var(--dim); font-size:13px; }
+  .cab button:hover { border-color:var(--acc); color:var(--txt); }
+
   #chat { flex:1; overflow-y:auto; padding:24px; display:flex; flex-direction:column; gap:14px; }
+  #xray-cont { flex:1; overflow-y:auto; padding:16px; }
+  /* en columna propia el panel ya no compite con las burbujas: que ocupe todo */
+  #xray-cont .xray { max-width:none; }
+  .vacio { color:var(--dim); font-style:italic; font-size:13px; line-height:1.5;
+           text-align:center; padding:40px 20px; }
+  /* de qué turno habla el panel */
+  .turno { font-size:12px; color:var(--dim); margin-bottom:10px; padding-left:2px; }
+  .turno b { color:var(--txt); font-weight:500; }
+  /* En pantalla estrecha, dos columnas al 50 % no se leen: se apilan. */
+  @media (max-width:900px) {
+    #escena { flex-direction:column; }
+    #col-xray { border-left:none; border-top:1px solid var(--line); }
+  }
   .msg { max-width:680px; padding:12px 16px; border-radius:14px; line-height:1.5; white-space:pre-wrap; }
   .user { align-self:flex-end; background:var(--acc); color:#fff; border-bottom-right-radius:4px; }
   .bot  { align-self:flex-start; background:var(--panel); border:1px solid var(--line); border-bottom-left-radius:4px; }
@@ -47,9 +81,6 @@
      cambio sutil de antes era invisible sobre el fondo oscuro y parecía que
      el botón no respondía. */
   #xray-btn.on { color:#fff; border-color:transparent; background:var(--acc); }
-  /* Avisos del sistema en el hilo (no los dice el personaje). */
-  .aviso-sis { align-self:center; font-size:12px; color:var(--dim); font-style:italic;
-               border:1px dashed var(--line); border-radius:14px; padding:5px 12px; }
   .xray { align-self:flex-start; max-width:680px; width:100%; font-size:12.5px;
           border:1px solid var(--line); border-left:2px solid var(--acc);
           border-radius:10px; background:#12141c; color:var(--dim); }
@@ -95,6 +126,10 @@
                border:1px solid var(--line); border-radius:10px; overflow:hidden;
                background:#000; display:none; }
   #presencia.viendo { display:block; }
+  /* Con la columna de rayos X abierta, el visor se cambia de lado: si no,
+     tapa justo la esquina donde acaban de aparecer las capas. */
+  #escena[data-vista="ambos"] ~ #presencia,
+  #escena[data-vista="xray"]  ~ #presencia { left:16px; right:auto; }
   #presencia.cerca { border-color:var(--acc); }
   #cam { display:block; width:100%; height:auto; transform:scaleX(-1); opacity:.75; }
   #pstat { padding:5px 8px; font-size:10.5px; color:var(--dim); background:var(--panel);
@@ -115,7 +150,20 @@
     <button id="xray-btn" title="Muestra cómo se construyó cada respuesta">🔬 Rayos X</button>
     <button id="ojo" title="La webcam detecta quién se acerca y hacia dónde mira">👁 Presencia</button>
   </header>
-  <div id="chat"><div id="saludo">Elige un guardián para empezar.</div></div>
+  <main id="escena" data-vista="solo">
+    <section id="col-chat" class="col">
+      <div class="cab">Conversación
+        <button data-col="chat" title="Ampliar a pantalla completa">⤢</button>
+      </div>
+      <div id="chat"><div id="saludo">Elige un guardián para empezar.</div></div>
+    </section>
+    <section id="col-xray" class="col">
+      <div class="cab">🔬 Rayos X — cómo se construyó
+        <button data-col="xray" title="Ampliar a pantalla completa">⤢</button>
+      </div>
+      <div id="xray-cont"></div>
+    </section>
+  </main>
   <div id="invita"></div>
   <div id="presencia"><video id="cam" playsinline muted></video><div id="pstat"></div></div>
   <footer>
@@ -130,6 +178,8 @@ const $sel = document.getElementById('selector');
 const $inp = document.getElementById('entrada');
 const $btn = document.getElementById('enviar');
 const $mic = document.getElementById('mic');
+const $escena = document.getElementById('escena');
+const $xcont = document.getElementById('xray-cont');
 let generando = false;   // el personaje está redactando su respuesta
 
 // Abre o cierra los tres controles a la vez (se bloquean mientras responde).
@@ -214,9 +264,11 @@ async function enviar() {
         if (ev.t !== undefined) {
           acumulado += ev.t; bot.textContent = acumulado;
         } else if (ev.rayosx) {
-          // el proceso va ANTES de la respuesta: primero cómo, luego qué
-          panel = panelRayosX(ev.rayosx);
-          $chat.insertBefore(panel, bot);
+          // Llega ANTES del primer token: cuando el personaje empieza a hablar,
+          // la columna de al lado ya enseña con qué se construyó la respuesta.
+          panel = panelRayosX(ev.rayosx, texto);
+          $xcont.replaceChildren(panel);   // solo el último turno: cinco capas
+          $xcont.scrollTop = 0;            // por turno no se pueden apilar
         } else if (ev.fin) {
           terminar();
         } else if (ev.memoria && panel) {
@@ -240,14 +292,31 @@ $xbtn.onclick = () => {
   xray = !xray;
   $xbtn.classList.toggle('on', xray);
   $xbtn.textContent = xray ? '🔬 Rayos X activo' : '🔬 Rayos X';
-  // El panel se arma con los datos del turno, así que solo puede aparecer en el
-  // SIGUIENTE mensaje. Sin decirlo, pulsar el botón parece no hacer nada.
-  const d = el('div', 'aviso-sis', xray
-    ? 'Rayos X activado: verás el proceso en la próxima respuesta.'
-    : 'Rayos X desactivado.');
-  $chat.appendChild(d);
-  $chat.scrollTop = $chat.scrollHeight;
+  vista(xray ? 'ambos' : 'solo');
+  if (xray && !$xcont.children.length) {
+    // El panel se arma con los datos de un turno, así que hasta el próximo
+    // mensaje no hay nada que enseñar. Decirlo evita que parezca averiado.
+    $xcont.appendChild(el('div', 'vacio',
+      'Manda un mensaje y aquí verás, capa por capa, cómo se construyó la respuesta.'));
+  }
 };
+
+// --- Las dos columnas: 50/50 o una a pantalla completa -------------------
+function vista(v) {
+  $escena.dataset.vista = v;
+  document.querySelectorAll('.cab button').forEach(b => {
+    const grande = $escena.dataset.vista === b.dataset.col;
+    b.textContent = grande ? '⤡' : '⤢';
+    b.title = grande ? 'Volver a media pantalla' : 'Ampliar a pantalla completa';
+  });
+}
+
+document.querySelectorAll('.cab button').forEach(b => {
+  b.onclick = () => {
+    // Segundo toque en el que ya está ampliado: se vuelve al reparto 50/50.
+    vista($escena.dataset.vista === b.dataset.col ? 'ambos' : b.dataset.col);
+  };
+});
 
 function el(tag, cls, txt) {
   const d = document.createElement(tag);
@@ -287,7 +356,16 @@ function fragmento(f, umbral) {
   return d;
 }
 
-function panelRayosX(x) {
+// Devuelve un bloque con la pregunta del turno + las cinco capas. Es un <div>
+// de verdad, no un fragment: memoriaRayosX() lo consulta DESPUÉS de insertarlo
+// para rellenar la capa ⑤, y un fragment se vacía al añadirlo al DOM.
+function panelRayosX(x, pregunta) {
+  const caja = el('div');
+  if (pregunta) {
+    const t = el('div', 'turno', 'Turno: ');
+    t.appendChild(el('b', null, '“' + pregunta + '”'));
+    caja.appendChild(t);
+  }
   const p = el('div', 'xray');
 
   // ① IDENTIDAD — un cerebro, varias voces
@@ -365,7 +443,8 @@ function panelRayosX(x) {
     + 'capa ② de conversaciones futuras — con otros visitantes.'));
   p.appendChild(c5);
 
-  return p;
+  caja.appendChild(p);
+  return caja;
 }
 
 // Rellena la capa ⑤ cuando llega el veredicto de la memoria.

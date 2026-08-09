@@ -234,7 +234,7 @@ Landmarker corriendo en WASM dentro de la pestaña. Mide dos cosas:
 | Qué | Cómo | Para qué |
 |---|---|---|
 | **Distancia** | El ancho aparente de la cara contra el modelo de cámara estenopeica | Por debajo de 0,5 m, invita |
-| **Giro de cabeza** | La pose 3D que devuelve el propio modelo | De frente **Zinc**, a su derecha **VA 91**, a su izquierda **Ucron** |
+| **Giro de cabeza** | La pose 3D que devuelve el propio modelo | A partir de **20°**: de frente **Zinc**, a su derecha **VA 91**, a su izquierda **Ucron** |
 
 > 🔒 **El vídeo no sale de la pestaña.** No se graba, no se sube y no se
 > guarda un solo fotograma: el modelo y el WASM se sirven desde `web/vendor/`,
@@ -247,14 +247,18 @@ herramienta. Pon a alguien donde quieras el límite y mira qué número sale.
 Todo se ajusta desde la URL, sin tocar el código:
 
 ```
-index.html?cerca=0.6&fov=70&giro=40&invertir=1
+index.html?cerca=0.6&fov=70&giro=25&vuelta=15&invertir=1
 ```
 
 - `cerca` — el umbral en metros (por defecto `0.5`).
 - `fov` — el campo de visión de tu webcam en grados (por defecto `60`). **Es el
   dial que más corrige la distancia**: si todas las lecturas salen cortas o
   largas por igual, es este.
-- `giro` — los grados que exige el cambio de personaje (por defecto `45`).
+- `giro` — los grados que exigen el cambio de personaje (por defecto `20`).
+- `vuelta` — los grados por debajo de los cuales se suelta ese lado y se
+  regresa al personaje frontal (por defecto `12`). **Tiene que ser menor que
+  `giro`**: esa banda muerta es lo que evita que el personaje salte solo
+  mientras alguien habla girando la cabeza.
 - `invertir=1` — si la derecha y la izquierda salen cambiadas.
 
 La distancia es una **estimación**, no una medida: la anchura de una cara varía
