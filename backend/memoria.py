@@ -27,13 +27,16 @@ _chroma = None
 _ef = None
 _vllm_url = None
 _headers = {}
-_modelo_base = "Qwen/Qwen2.5-3B-Instruct"
+_modelo_base = "Qwen/Qwen3-8B"
 _sqlite_path = None
 _cols_exp = {}          # cache de colecciones _exp
 
 # Umbrales de curaduría
 DEDUP = 0.12            # si un recuerdo nuevo está más cerca que esto de uno
                         # ya guardado, se considera duplicado y no se añade.
+
+# Cierre del bloque de razonamiento de Qwen3 (ver distilar()).
+CIERRA_PENSAMIENTO = "</think>"
 
 
 def init(chroma, ef, vllm_url, headers, modelo_base, sqlite_path):
@@ -105,6 +108,10 @@ async def distilar(pregunta: str, respuesta: str) -> str:
         "stream": False,
         "temperature": 0.3,
         "max_tokens": 60,
+        # Sin razonamiento: aquí el modelo tiene que contestar UNA frase (o la
+        # palabra NADA). Si Qwen3 abriera su <think>, se comería los 60 tokens
+        # pensando y la respuesta llegaría cortada a la mitad del razonamiento.
+        "chat_template_kwargs": {"enable_thinking": False},
     }
     try:
         async with httpx.AsyncClient(timeout=60) as client:
@@ -113,6 +120,11 @@ async def distilar(pregunta: str, respuesta: str) -> str:
             texto = r.json()["choices"][0]["message"]["content"].strip()
     except Exception:
         return ""   # si falla la destilación, no rompemos el chat
+    # Red de seguridad: si aun así vino un bloque de razonamiento, nos quedamos
+    # con la conclusión. Sin esto, el 'NADA' de abajo nunca coincidiría y se
+    # guardarían recuerdos que son en realidad el monólogo interno del modelo.
+    if CIERRA_PENSAMIENTO in texto:
+        texto = texto.split(CIERRA_PENSAMIENTO)[-1].strip()
     if not texto or texto.upper().startswith("NADA"):
         return ""
     return texto

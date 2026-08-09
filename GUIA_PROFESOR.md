@@ -19,9 +19,23 @@ Haz esto **el día antes**, no delante de la clase.
 |-----------|--------------|
 | Python 3.10+ | `python --version` |
 | Ollama instalado (<https://ollama.com>) | `ollama --version` |
-| Modelo base descargado (~2 GB) | `ollama pull qwen2.5:3b` |
+| Modelo base descargado (~5,2 GB) | `ollama pull qwen3:8b` |
 | Dependencias Python | ver abajo |
-| ~10 GB de disco libre | |
+| **16 GB de RAM** y ~20 GB de disco libre | 8 GB de RAM van muy justos con un 8B |
+
+> 🚨 **Lo que hay que preparar ANTES del día del taller.** El modelo base son
+> **~5,2 GB por portátil**. Quince alumnos descargándolo a la vez del wifi del
+> aula es media mañana perdida. Manda el `ollama pull qwen3:8b` como tarea previa,
+> o lleva el modelo en pendrives.
+>
+> Y avisa de los **tiempos**: en CPU, cada respuesta tarda **2-3 minutos** (con
+> el 3B era ~1). Planifica los ejercicios para que la espera no mate el ritmo —
+> o pide a los alumnos que lancen la generación y sigan leyendo mientras.
+>
+> **Nuevo con Qwen3:** el modelo escribe su razonamiento en un bloque
+> `<think>…</think>` antes de responder. Enséñales `/no_think` en el primer
+> ejercicio, o pasarán media clase preguntando qué es eso. Da mucho juego como
+> lección: el "modo" del modelo no es un ajuste, es texto en el prompt.
 
 ```powershell
 # Desde la carpeta personaje-artificial/
@@ -156,7 +170,7 @@ pero condiciona todas sus respuestas. Señala en el `Modelfile` el bloque
 > memoria > estilo > utilidad.
 
 ### Actividad (30 min, individual)
-El `Modelfile` ya apunta a `FROM qwen2.5:3b`, así que se puede probar la
+El `Modelfile` ya apunta a `FROM qwen3:8b`, así que se puede probar la
 personalidad **sin entrenar nada**:
 
 ```powershell
@@ -331,8 +345,9 @@ Sigue [RUNPOD.md](RUNPOD.md) al pie de la letra:
    - Si la loss se va casi a 0 → **sobreajuste**: se está aprendiendo el dataset
      de memoria en vez de aprender el estilo.
 
-6. Descargar el `.gguf` (~2 GB) y **repartirlo** a los alumnos (pendrive/carpeta
-   compartida — descargarlo 15 veces del pod mata el wifi).
+6. Descargar el `.gguf` (~5 GB) y **repartirlo** a los alumnos (pendrive/carpeta
+   compartida — con 5 GB, descargarlo 15 veces del pod no es que mate el wifi:
+   es que no termina en toda la sesión. Lleva pendrives preparados).
 
 7. **🚨 APAGA EL POD.** Hazlo delante de ellos: es parte de la lección de costes.
 
@@ -379,7 +394,7 @@ solo tardó más?*
 2. Editar el `Modelfile`: **comentar** la línea del base y **descomentar** la del GGUF.
 
    ```dockerfile
-   # FROM qwen2.5:3b
+   # FROM qwen3:8b
    FROM ./va91-gguf/unsloth.Q4_K_M.gguf
    ```
 

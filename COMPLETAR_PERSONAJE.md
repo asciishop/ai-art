@@ -69,7 +69,7 @@ Y en RunPod (GPU):
 # 4. LoRA de TEXTO (mismo base que VA 91)  ->  personajes/zinc/adapter/
 python tools/train.py --dataset personajes/zinc/dataset.jsonl \
                       --salida personajes/zinc/adapter \
-                      --modelo unsloth/Qwen2.5-3B-Instruct
+                      --modelo unsloth/Qwen3-8B
 #    NO uses --exportar-gguf: vLLM usa el adapter safetensors directo.
 
 # 5. LoRA de IMAGEN (SDXL, con kohya)  ->  zinc-style.safetensors

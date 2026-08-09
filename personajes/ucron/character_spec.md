@@ -12,7 +12,7 @@
 |---|---|
 | Nombre del personaje | **Ucron — el Guardián del Imaginario Basura** |
 | Nombre del modelo Ollama | `ucron` |
-| Modelo base | `unsloth/Qwen2.5-3B-Instruct` (Ollama: `qwen2.5:3b`) |
+| Modelo base | `unsloth/Qwen3-8B` |
 | Versión | v1.0 |
 | Idioma principal | Español |
 | Autores | Santos Interactive |

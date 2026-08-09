@@ -12,7 +12,7 @@
 |---|---|
 | Nombre del personaje | **VA 91 — el Buda Eléctrico** |
 | Nombre del modelo Ollama | `va91` |
-| Modelo base | `unsloth/Qwen2.5-3B-Instruct` (Ollama: `qwen2.5:3b`) |
+| Modelo base | `unsloth/Qwen3-8B` |
 | Versión | v1.0 |
 | Idioma principal | Español |
 | Autores | Santos interactive |

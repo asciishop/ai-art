@@ -62,7 +62,7 @@ node "POD RunPod - GPU 24 GB - CUDA >= 12.8" as POD #E8F5E9 {
 
   node "vLLM :8000\nINTERNO - no se expone" as VLLMNODE {
     component "OpenAI API server\nmulti-LoRA" as VLLM
-    artifact  "Qwen2.5-3B-Instruct\nmodelo base: 1 sola copia en VRAM" as BASE
+    artifact  "Qwen3-8B\nmodelo base: ~16,4 GB en VRAM\nrazonamiento DESACTIVADO" as BASE
   }
 
   node "Disco del pod (/workspace)" as DISCO {

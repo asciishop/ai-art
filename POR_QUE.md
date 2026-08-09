@@ -94,22 +94,62 @@ Su trabajo es cargar modelos en memoria y responder preguntas por HTTP. Cuando
 si Ollama no está abierto, verás un **error de conexión**: no es que el modelo
 falle, es que **no hay nadie escuchando**.
 
-### `ollama pull qwen2.5:3b` · ¿qué modelo es este y por qué?
+### `ollama pull qwen3:8b` · ¿qué modelo es este y por qué?
 
-- **Qwen2.5** — familia de modelos abiertos de Alibaba, muy buena en español.
-- **3b** — **3.000 millones de parámetros**. Los "grandes" (GPT, Claude) tienen
-  cientos de miles de millones. Este es pequeño *a propósito*.
-- Ocupa ~1.9 GB porque viene **cuantizado a 4 bits** (ahora vemos qué es eso).
+- **Qwen3** — familia de modelos abiertos de Alibaba, muy buena en español.
+- **8b** — **8.000 millones de parámetros**. Los "grandes" (GPT, Claude) tienen
+  cientos de miles de millones. Este sigue siendo pequeño, pero ya no diminuto.
+- Ocupa ~5,2 GB porque viene **cuantizado a 4 bits** (ahora vemos qué es eso).
 
-**¿Por qué uno tan pequeño?** Porque tiene que caber y correr **en tu portátil,
-sin tarjeta gráfica**. Un modelo de 70B necesitaría 40 GB de memoria y una GPU de
-datacenter. Este cabe en 2 GB y corre en tu CPU.
+**¿Por qué este tamaño?** Es el punto donde un modelo empieza a sostener un
+personaje sin derrumbarse, y todavía cabe en un portátil. Un modelo de 70B
+necesitaría 40 GB de memoria y una GPU de datacenter. Este corre en tu CPU.
 
-**El precio que pagamos:** es **lento** (≈1 minuto por respuesta) y **menos
-listo**. Cometerá faltas de concordancia y se le irá la olla más de lo que te
-gustaría. Eso no es un fallo del taller: **es la lección**. Los modelos pequeños
-son más frágiles, y por eso las capas (prompt, RAG, fine-tuning) importan **más**
-aquí que en un modelo gigante.
+> 📌 **Veníamos de un 3B, y el cambio se nota en las dos direcciones.** Antes el
+> modelo cabía en 2 GB y respondía en ~1 minuto; ahora pide ~5 GB y **cuenta con
+> 2-3 minutos por respuesta** en CPU (es una estimación proporcional al tamaño:
+> mídelo en tu equipo y apúntalo en `benchmark.md`). A cambio, se le va mucho
+> menos la olla. Ese intercambio —memoria y paciencia contra coherencia— **es la
+> decisión de ingeniería más real de todo el taller**.
+
+**El precio que seguimos pagando:** es **lento**, y en un portátil de 8 GB de RAM
+va ahogado. Necesitas **16 GB** para trabajar cómodo. Y sigue siendo un modelo
+pequeño: cometerá fallos que un modelo gigante no comete.
+
+Eso no es un defecto del taller: **es la lección**. Los modelos pequeños son más
+frágiles, y por eso las capas (prompt, RAG, fine-tuning) importan **más** aquí
+que en un modelo gigante. Con un modelo enorme, casi cualquier prompt funciona y
+no aprendes nada.
+
+### Qwen3 "piensa en voz alta" · el bloque `<think>`
+
+Esto es nuevo respecto al 3B y te va a desconcertar la primera vez.
+
+Qwen3 es un modelo **híbrido de razonamiento**: por defecto, antes de responder
+escribe su propio razonamiento dentro de un bloque `<think>…</think>`. Verás algo
+así:
+
+```
+<think>
+El usuario pregunta quién soy. Soy VA 91, debo responder en mi tono...
+</think>
+Tu señal llegó a los 3005. Te escucho, caminante.
+```
+
+Para razonar problemas es una maravilla. **Para un personaje es veneno**: rompe
+la ilusión, gasta tiempo de generación y, si el personaje habla por un altavoz,
+lo lee todo en alto.
+
+**Cómo apagarlo.** Qwen3 entiende un interruptor en el propio texto: escribe
+`/no_think` en el mensaje (o en el System Prompt) y responde directo. En
+versiones recientes de Ollama también tienes `/set nothink` dentro de
+`ollama run`.
+
+> 🔑 **La idea de fondo, que vale más que el truco:** el modelo no tiene un
+> "modo" interno que tú configuras desde fuera. Lo que hay es **texto** — una
+> plantilla de chat que decide si el turno empieza con `<think>` o no. Apagar el
+> razonamiento es cambiar la cadena de texto que recibe. Como todo lo demás en
+> este taller.
 
 ---
 
@@ -142,7 +182,7 @@ mensaje que a los del usuario. Por eso funciona: es una convención aprendida.
 El `Modelfile` es la receta que Ollama usa para **construir** el modelo `va91`:
 
 ```dockerfile
-FROM qwen2.5:3b                 ← el modelo base
+FROM qwen3:8b                   ← el modelo base
 PARAMETER temperature 0.8       ← su humor
 SYSTEM """Eres VA 91..."""      ← su identidad, incrustada
 ```
@@ -403,7 +443,7 @@ Pierdes algo de precisión, sí. Sorprendentemente poca. Y es lo que hace que to
 esto sea posible en un taller de 8 horas y no en un laboratorio.
 
 > Por eso el `.gguf` final se llama `Q4_K_M`: **Q4** = 4 bits. Es el mismo truco
-> que permite que `qwen2.5:3b` corra en tu portátil.
+> que permite que `qwen3:8b` corra en tu portátil.
 
 ### Qué mirar mientras entrena
 

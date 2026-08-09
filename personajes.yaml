@@ -15,7 +15,7 @@
 #  - 'trigger' es la palabra que invoca su estilo visual en ComfyUI; debe ser la
 #    misma con la que se etiquetaron sus imágenes de entrenamiento.
 
-modelo_base: "Qwen/Qwen2.5-3B-Instruct"   # base común de los 3 LoRAs de texto
+modelo_base: "Qwen/Qwen3-8B"              # base común de los 3 LoRAs de texto
 modelo_imagen: "SDXL"                       # base común de los 3 LoRAs de estilo
 
 personajes:

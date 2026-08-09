@@ -16,7 +16,7 @@ dataset, fine-tuning) debe ser coherente con lo que aquí se decida.
 | Nombre del personaje | **Zinc — el Guardián de la Memoria de los Metales** |
 | Nombre del modelo Ollama | `zinc` |
 | id en `personajes.yaml` | `zinc` |
-| Modelo base | `unsloth/Qwen2.5-3B-Instruct` (Ollama: `qwen2.5:3b`) |
+| Modelo base | `unsloth/Qwen3-8B` |
 | Versión | v1.0 |
 | Idioma principal | Español |
 | Autores | Santos Interactive |

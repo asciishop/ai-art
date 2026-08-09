@@ -4,7 +4,7 @@
 > **RunPod**. Aquí van los pasos completos: subir el dataset, entrenar, exportar
 > el GGUF y descargarlo para usarlo en tu Ollama local.
 >
-> Modelo base: **Qwen2.5-3B-Instruct** · Método: **QLoRA 4-bit con Unsloth**.
+> Modelo base: **Qwen3-8B** · Método: **QLoRA 4-bit con Unsloth**.
 
 ---
 
@@ -14,22 +14,27 @@ Solo dos cosas (son pequeñas, unos KB):
 - `dataset.jsonl` — generado en local con `python scripts/build_dataset.py`
 - `train.py`
 
-Todo lo pesado (modelo base ~6 GB, checkpoints) vive y muere en el pod.
+Todo lo pesado (modelo base ~16 GB, checkpoints) vive y muere en el pod.
 
 ## 1. Crear el pod
 
 1. Entra en <https://runpod.io> → **Pods** → **Deploy**.
 
-2. **GPU.** Qwen2.5-3B en QLoRA 4-bit gasta entre 5 y 12 GB de VRAM (ver
-   `benchmark.md`), así que no hace falta nada caro:
+2. **GPU.** Qwen3-8B en QLoRA 4-bit mueve entre **12 y 16 GB** de VRAM: los
+   pesos cuantizados son ~5 GB y el resto son activaciones. Con el 3B bastaban
+   16 GB de sobra; ahora esa es la línea justa:
 
    | GPU | VRAM | ~USD/h | Veredicto |
    |-----|------|--------|-----------|
-   | RTX 2000 Ada / A4000 | 16 GB | ~0.25 | Mínimo, funciona |
-   | **RTX 4000 Ada** | **20 GB** | **~0.26** | ✅ **Mejor relación**: 2 céntimos más y 4 GB de colchón |
-   | RTX 3090 | 24 GB | ~0.46 | Margen de sobra |
-   | RTX 4090 | 24 GB | ~0.69 | Innecesaria para 3B: pagas 2,6× por VRAM que no usas |
+   | RTX 2000 Ada / A4000 | 16 GB | ~0.25 | Al límite: baja `--batch` a 1 si da OOM |
+   | **RTX 4000 Ada** | **20 GB** | **~0.26** | ✅ **Mejor relación**: entra sin pelear |
+   | RTX 3090 / 4090 | 24 GB | 0.46–0.69 | Margen de sobra, y sirve también para desplegar |
    | H100 / H200 / B300 | 80+ GB | 2.89–7.39 | ❌ Para modelos de 70B. Tirar el dinero |
+
+   > 💡 **Ojo con no confundir dos cosas.** Estos números son de **entrenar**
+   > (4-bit). **Servir** el modelo en la plataforma es distinto: ahí va en bf16
+   > y pide **24 GB** (ver [`pod/CORRER.md`](pod/CORRER.md)). Puedes entrenar en
+   > una GPU más pequeña que la que luego usarás para la sala.
 
 3. 🚨 **Filtra por versión de CUDA ≥ 12.8** en el selector de RunPod.
    **Este es el paso que más dolor evita.** Los hosts con driver antiguo (12.4)
@@ -48,9 +53,9 @@ Todo lo pesado (modelo base ~6 GB, checkpoints) vive y muere en el pod.
 5. **GPU count: 1.** `train.py` es de una sola GPU; con 2 pagas el doble y no va
    más rápido.
 
-6. **Disco del contenedor: ≥ 30 GB.** El valor por defecto suele ser 20 GB y
-   **no llega** (modelo base ~6 GB + GGUF de salida ~2 GB). Aquí se atasca más
-   gente que en la VRAM.
+6. **Disco del contenedor: ≥ 50 GB.** El valor por defecto suele ser 20 GB y
+   **no llega ni de lejos** (modelo base ~16 GB + GGUF de salida ~5 GB). Con el
+   3B bastaban 30 GB; con el 8B esto se atasca antes que la VRAM.
 
 7. Deploy → **Connect** → abre **Jupyter Lab** o la **Web Terminal**.
 
@@ -148,7 +153,7 @@ Mientras entrena, observa en la salida (Módulo 5):
 - `adapter_model/adapter_model.safetensors` → **el adaptador LoRA** (entregable
   del Módulo 5). Pesa poco (~50-150 MB).
 - `training_logs/` → métricas.
-- `va91-gguf/*.Q4_K_M.gguf` → **modelo fusionado y cuantizado** (~2 GB) listo
+- `va91-gguf/*.Q4_K_M.gguf` → **modelo fusionado y cuantizado** (~5 GB) listo
   para Ollama.
 
 ## 6. Descargar a tu portátil
@@ -174,7 +179,7 @@ En tu portátil, edita el `Modelfile`:
 
 ```dockerfile
 # comenta la línea del base y descomenta la del GGUF:
-# FROM qwen2.5:3b
+# FROM qwen3:8b
 FROM ./va91-gguf/unsloth.Q4_K_M.gguf
 ```
 
@@ -214,7 +219,10 @@ ollama run va91
 
 Si no quieres pagar RunPod, Unsloth publica notebooks gratuitos en Colab (GPU
 T4). Mismo `train.py` y `dataset.jsonl`; el flujo es idéntico salvo que subes los
-archivos al Colab. Busca "Unsloth Qwen2.5 Colab" en su repositorio oficial.
+archivos al Colab. Busca "Unsloth Qwen3 Colab" en su repositorio oficial.
+
+> ⚠️ La T4 gratuita tiene **16 GB**: con Qwen3-8B en 4-bit vas al límite. Si da
+> OOM, baja `--batch` a 1 y sube `--grad-accum` a 8.
 
 ## Estimación de costo
 

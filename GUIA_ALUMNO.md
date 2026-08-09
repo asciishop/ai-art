@@ -52,12 +52,21 @@ pip install -r requirements.txt
 ```
 
 ```powershell
-# 3. Descargar el modelo base de Ollama (~2 GB, tarda un poco)
-ollama pull qwen2.5:3b
+# 3. Descargar el modelo base de Ollama (~5,2 GB, tarda un rato largo)
+ollama pull qwen3:8b
 ```
 
 > **Si Ollama no está instalado:** bájalo de <https://ollama.com> e instálalo.
 > No es un paquete de Python, es un programa aparte.
+
+> ⏳ **Ten paciencia con las respuestas.** Son 8.000 millones de parámetros
+> corriendo en tu CPU: cuenta con **2-3 minutos por respuesta**. No está colgado.
+> Si tu portátil tiene 8 GB de RAM, cierra el navegador antes de lanzarlo.
+
+> 🤔 **Y no te asustes si ves un bloque `<think>`.** Qwen3 escribe su
+> razonamiento antes de responder. Para apagarlo, añade **`/no_think`** al final
+> de tu mensaje (o dentro del System Prompt). Está explicado en
+> [`POR_QUE.md`](POR_QUE.md).
 
 ### Comprueba que todo está bien
 
@@ -448,7 +457,7 @@ Del entrenamiento salen:
 
 - `adapter_model/` → **el adaptador LoRA** (~100 MB).
 - `training_logs/` → las métricas.
-- `va91-gguf/*.Q4_K_M.gguf` → **el modelo entrenado y cuantizado (~2 GB)**, listo
+- `va91-gguf/*.Q4_K_M.gguf` → **el modelo entrenado y cuantizado (~5 GB)**, listo
   para Ollama. 👈 **Este es el archivo que necesitas para el siguiente módulo.**
 
 Cópialo a tu portátil (el profesor te lo pasará) en `personaje-artificial/va91-gguf/`.
@@ -469,7 +478,7 @@ Abre el `Modelfile` y cambia las dos líneas de arriba: **comenta** la del model
 base y **descomenta** la del GGUF.
 
 ```dockerfile
-# FROM qwen2.5:3b
+# FROM qwen3:8b
 FROM ./va91-gguf/unsloth.Q4_K_M.gguf
 ```
 

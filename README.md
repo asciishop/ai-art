@@ -104,12 +104,12 @@ python tools/ingest.py --personaje <id> --reset  # indexa su mundo (RAG)
 ```bash
 python tools/train.py --dataset personajes/<id>/dataset.jsonl \
                       --salida  personajes/<id>/adapter \
-                      --modelo  unsloth/Qwen2.5-3B-Instruct --rank 16
+                      --modelo  unsloth/Qwen3-8B --rank 16
 ```
 ~10 minutos y unos céntimos. El resultado es `adapter/`: la voz del personaje, un
 archivo pequeño que se "enchufa" al modelo base.
 
-> **Todos los personajes se entrenan sobre el MISMO modelo base** (Qwen2.5-3B).
+> **Todos los personajes se entrenan sobre el MISMO modelo base** (Qwen3-8B).
 > Es lo que permite servir a los tres a la vez con un solo motor.
 
 ---
@@ -129,11 +129,11 @@ navegador / instalación → backend → vLLM (base + va91 + zinc + ucron)
 Guía completa con comandos y errores resueltos: [`pod/CORRER.md`](pod/CORRER.md).
 En resumen:
 
-1. Pod en RunPod, plantilla vLLM, GPU de 20-24 GB, **driver CUDA ≥12.8**.
+1. Pod en RunPod, plantilla vLLM (**>=0.8.5**), GPU de **24 GB**, **driver CUDA ≥12.8**.
 2. **Comando de arranque** del pod (sirve los 3 personajes):
    ```
-   --model Qwen/Qwen2.5-3B-Instruct --host 0.0.0.0 --port 8000 --enable-lora
-   --max-loras 3 --max-lora-rank 32 --gpu-memory-utilization 0.85
+   --model Qwen/Qwen3-8B --host 0.0.0.0 --port 8000 --enable-lora
+   --max-loras 3 --max-lora-rank 32 --gpu-memory-utilization 0.90
    --lora-modules va91-text=<ruta>/va91/adapter zinc-text=<ruta>/zinc/adapter
                   ucron-text=<ruta>/ucron/adapter
    ```
@@ -282,7 +282,7 @@ local oye mejor que el navegador y no depende de conexión.
 
 ## Las reglas que no se rompen
 
-1. **Los personajes se entrenan sobre el mismo base** (Qwen2.5-3B) — requisito
+1. **Los personajes se entrenan sobre el mismo base** (Qwen3-8B) — requisito
    del multi-LoRA de vLLM.
 2. **vLLM usa el adaptador `safetensors`**, no GGUF (eso era para Ollama).
 3. **Una colección de memoria por personaje** — nunca compartida, para que no se

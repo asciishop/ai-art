@@ -2,7 +2,7 @@
 
 > Guía definitiva para un pod cuya imagen **ya trae vLLM** (plantilla vLLM /
 > Trelis). Sirve los 3 personajes (VA 91, Zinc, Ucron) sobre el mismo
-> Qwen2.5-3B con multi-LoRA, y expone el chat web.
+> Qwen3-8B con multi-LoRA, y expone el chat web.
 >
 > **Idea central:** la plantilla auto-arranca SU vLLM y ocupa la GPU. En vez de
 > pelear con él, se **reemplaza el comando de arranque del contenedor** por el
@@ -12,14 +12,16 @@
 
 ## PASO 0 · Crear/editar el pod
 
-**GPU:** RTX 4000 Ada / RTX PRO 4000 (20-24 GB) — un 3B usa ~7 GB, sobra.
-**Plantilla:** "Qwen2.5 3B - vLLM by Trelis" o "vLLM Latest (Verified)".
+**GPU:** 24 GB como mínimo (RTX 4090 / RTX PRO 4000 / L4). Qwen3-8B en bf16
+ocupa ~16,4 GB solo de pesos, así que 16 GB **no llegan**.
+**Plantilla:** "vLLM Latest (Verified)" — **vLLM >= 0.8.5**, que es la primera
+versión que entiende Qwen3 y su `enable_thinking`.
 
 **Container Start Command** (esto es lo que evita toda la pelea) — pégalo en el
 campo de comando del pod:
 
 ```
---model Qwen/Qwen2.5-3B-Instruct --host 0.0.0.0 --port 8000 --dtype auto --gpu-memory-utilization 0.85 --max-model-len 4096 --enable-lora --max-loras 3 --max-lora-rank 32 --lora-modules va91-text=/workspace/art-taller/personajes/va91/adapter zinc-text=/workspace/art-taller/personajes/zinc/adapter ucron-text=/workspace/art-taller/personajes/ucron/adapter
+--model Qwen/Qwen3-8B --host 0.0.0.0 --port 8000 --dtype auto --gpu-memory-utilization 0.90 --max-model-len 4096 --enable-lora --max-loras 3 --max-lora-rank 32 --lora-modules va91-text=/workspace/art-taller/personajes/va91/adapter zinc-text=/workspace/art-taller/personajes/zinc/adapter ucron-text=/workspace/art-taller/personajes/ucron/adapter
 ```
 
 > ⚠️ Ajusta la ruta base (`/workspace/art-taller`) a donde de verdad esté tu
@@ -60,7 +62,7 @@ curl -s http://localhost:8000/v1/models | python3 -m json.tool
   personajes**. Salta al PASO 4.
 - Si da `Connection refused` → vLLM aún carga (espera 1-2 min) o el comando de
   arranque no cuadra. Ve al PASO 3.
-- Si lista otro modelo (Qwen3-8B, etc.) → el Start Command no se aplicó; revisa
+- Si lista otro modelo (el de la plantilla, etc.) → el Start Command no se aplicó; revisa
   el PASO 0.
 
 ---
@@ -87,7 +89,7 @@ nvidia-smi     # debe quedar casi a 0
 
 # lanza el tuyo a mano
 cd /workspace/art-taller
-vllm serve Qwen/Qwen2.5-3B-Instruct \
+vllm serve Qwen/Qwen3-8B \
   --host 0.0.0.0 --port 8000 --dtype auto \
   --gpu-memory-utilization 0.85 --max-model-len 4096 \
   --enable-lora --max-loras 3 --max-lora-rank 32 \
@@ -163,7 +165,7 @@ El navegador habla solo con el 3000. El backend habla con vLLM en el 8000.
 | `CUDA out of memory` al arrancar | el vLLM de la plantilla ocupa la GPU | Start Command propio (PASO 0) |
 | `Address already in use` | otro vLLM ya usa el 8000 | `fuser -k 8000/tcp` |
 | vLLM "revive" al matarlo | es el proceso raíz del contenedor | cambiar el Start Command, no matarlo |
-| lista `Qwen3-8B` en /v1/models | Start Command no aplicado | revisar PASO 0 y reiniciar |
+| lista otro modelo en /v1/models | Start Command no aplicado | revisar PASO 0 y reiniciar |
 | `python: command not found` | la imagen solo trae python3 | `ln -sf $(which python3) ...` |
 | adapters desaparecen al reiniciar | disco efímero | montar volumen persistente (PASO 0) |
 

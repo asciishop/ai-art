@@ -49,7 +49,7 @@ K = int(os.environ.get("RAG_K", "3"))
 MAX_HISTORIAL = 8   # turnos de contexto que se conservan
 
 # Memoria que escribe
-MODELO_BASE = os.environ.get("MODELO_BASE", "Qwen/Qwen2.5-3B-Instruct")  # para destilar
+MODELO_BASE = os.environ.get("MODELO_BASE", "Qwen/Qwen3-8B")  # para destilar
 SQLITE_PATH = os.path.join(registro.RAIZ, "vector_store", "archivo.db")
 RECORDAR = os.environ.get("RECORDAR", "1") != "0"   # poner RECORDAR=0 para desactivar
 
@@ -137,6 +137,67 @@ def construir_mensajes(pers, mensaje: str, historial: list):
     return mensajes, traza
 
 
+# --- Cinturón de seguridad contra el razonamiento en voz alta ------------
+
+ABRE_P, CIERRA_P = "<think>", "</think>"
+
+
+class SinPensamiento:
+    """Filtro de streaming que descarta el bloque <think>…</think> de Qwen3.
+
+    El interruptor de verdad es 'enable_thinking: False' en el payload. Esto es
+    la red debajo: si el pod corre un vLLM antiguo que ignora ese campo, o si
+    alguien sirve otro modelo de razonamiento, el personaje empezaría a soltar
+    su monólogo interno por el altavoz de la sala. Aquí no llega.
+
+    Trabaja token a token, así que retiene texto solo mientras no sabe qué es:
+    en cuanto la respuesta demuestra ser normal, pasa a dejar pasar todo tal
+    cual y no cuesta nada.
+    """
+
+    def __init__(self):
+        self.cola = ""            # retenido a la espera de saber qué es
+        self.estado = "inicio"    # inicio -> pensando -> recortando -> limpio
+
+    def filtrar(self, trozo: str) -> str:
+        if self.estado == "limpio":
+            return trozo
+        self.cola += trozo
+
+        if self.estado == "inicio":
+            cabeza = self.cola.lstrip()
+            # Todavía podría ser '<think>' partido entre dos tokens: esperamos.
+            # (También cubre el trozo vacío o de solo espacios.)
+            if len(cabeza) < len(ABRE_P) and ABRE_P.startswith(cabeza):
+                return ""
+            if not cabeza.startswith(ABRE_P):
+                self.estado = "limpio"       # respuesta normal: paso libre
+                self.cola = ""
+                return cabeza
+            self.estado = "pensando"
+            self.cola = cabeza[len(ABRE_P):]
+
+        if self.estado == "pensando":
+            i = self.cola.find(CIERRA_P)
+            if i < 0:
+                # Sigue pensando. Guardamos solo la cola por si el cierre viene
+                # partido; lo demás se tira sin llegar nunca al navegador.
+                self.cola = self.cola[-len(CIERRA_P):]
+                return ""
+            self.estado = "recortando"
+            self.cola = self.cola[i + len(CIERRA_P):]
+
+        # "recortando": entre el </think> y la primera palabra hay saltos de
+        # línea. Si el cierre cayó justo al final de un trozo, esos saltos
+        # llegan en el SIGUIENTE, así que no basta con un lstrip de una vez:
+        # hay que seguir recortando hasta que aparezca texto de verdad.
+        salida = self.cola.lstrip()
+        self.cola = ""
+        if salida:
+            self.estado = "limpio"
+        return salida
+
+
 # --- API -----------------------------------------------------------------
 
 class ChatIn(BaseModel):
@@ -189,6 +250,11 @@ async def chat(entrada: ChatIn):
         "temperature": 0.85,
         "top_p": 0.9,
         "max_tokens": 350,
+        # Qwen3 es un modelo HÍBRIDO: por defecto razona en voz alta dentro de
+        # un bloque <think>…</think> antes de responder. Un personaje no piensa
+        # en público, así que se apaga. Sin esto, la sala vería el razonamiento
+        # en pantalla y el altavoz lo leería en alto.
+        "chat_template_kwargs": {"enable_thinking": False},
     }
 
     headers = {}
@@ -214,6 +280,7 @@ async def chat(entrada: ChatIn):
             }}) + "\n\n"
 
         completo = []   # acumulamos la respuesta para recordarla al final
+        filtro = SinPensamiento()
         async with httpx.AsyncClient(timeout=120) as client:
             async with client.stream("POST", VLLM_URL, json=payload, headers=headers) as r:
                 async for linea in r.aiter_lines():
@@ -227,6 +294,7 @@ async def chat(entrada: ChatIn):
                         trozo = delta.get("content", "")
                     except (KeyError, IndexError, json.JSONDecodeError):
                         continue
+                    trozo = filtro.filtrar(trozo) if trozo else ""
                     if trozo:
                         completo.append(trozo)
                         # reenviamos como SSE al navegador

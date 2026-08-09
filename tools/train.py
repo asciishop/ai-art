@@ -21,10 +21,11 @@ import argparse
 import os
 
 # --- Configuración por defecto (ajustable por CLI o editando aquí) --------
-# Qwen2.5-3B-Instruct: en QLoRA 4-bit ocupa ~6 GB VRAM (entra en cualquier GPU
-# de RunPod). NOTA: entrenar exige GPU NVIDIA con CUDA -> usar RunPod, NO tu
-# portátil (Intel HD 520 no sirve para entrenar).
-MODELO_BASE = "unsloth/Qwen2.5-3B-Instruct"
+# Qwen3-8B: en QLoRA 4-bit los pesos ocupan ~5 GB, y con activaciones y
+# gradient checkpointing el entrenamiento se mueve en 12-16 GB de VRAM. Cabe en
+# una GPU de 16 GB y va holgado en una de 24 GB.
+# NOTA: entrenar exige GPU NVIDIA con CUDA -> usar RunPod, NO tu portátil.
+MODELO_BASE = "unsloth/Qwen3-8B"
 MAX_SEQ_LEN = 2048
 DATASET = "dataset.jsonl"
 
@@ -50,7 +51,6 @@ def main():
     # en cualquier máquina.
     import torch._inductor.config  # noqa: F401  (torch 2.4: fuerza la carga del submódulo)
     from unsloth import FastLanguageModel
-    from unsloth.chat_templates import get_chat_template
     from datasets import load_dataset
     from trl import SFTTrainer, SFTConfig
 
@@ -62,8 +62,10 @@ def main():
         load_in_4bit=True,   # cuantización 4-bit: menos VRAM
     )
 
-    # Plantilla de chat de Qwen2.5 (usa <|im_start|>/<|im_end|>).
-    tokenizer = get_chat_template(tokenizer, chat_template="qwen-2.5")
+    # NO se sobreescribe la plantilla de chat. Qwen3 trae la suya, y es la que
+    # gestiona el bloque <think>…</think>; imponerle la de Qwen2.5 (como hacía
+    # la versión anterior de este script) entrena con un formato distinto del
+    # que luego usa vLLM al servir, y el personaje sale desalineado.
 
     # 2) Envolver el modelo con adaptadores LoRA (PEFT) --------------------
     model = FastLanguageModel.get_peft_model(
@@ -82,8 +84,14 @@ def main():
     ds = load_dataset("json", data_files=args.dataset, split="train")
 
     def formatear(ejemplos):
+        # enable_thinking=False: se entrena en el MISMO modo en que se sirve
+        # (ver el payload del backend). Si se entrenara en modo pensante y se
+        # sirviera sin pensar, el personaje respondería como si le faltara el
+        # primer paso que aprendió a dar.
         textos = [
-            tokenizer.apply_chat_template(m, tokenize=False, add_generation_prompt=False)
+            tokenizer.apply_chat_template(m, tokenize=False,
+                                          add_generation_prompt=False,
+                                          enable_thinking=False)
             for m in ejemplos["messages"]
         ]
         return {"text": textos}
@@ -127,8 +135,10 @@ def main():
     # 6) (Opcional) Merge + exportar a GGUF para Ollama (Módulo 7) ---------
     if args.exportar_gguf:
         print("[info] Exportando a GGUF Q4_K_M (esto tarda)...")
-        # Fusiona el LoRA con el base y cuantiza. El .gguf resultante (~2 GB) es
-        # lo ÚNICO que necesitas descargar de RunPod a tu portátil para Ollama.
+        # Fusiona el LoRA con el base y cuantiza. Con Qwen3-8B el .gguf sale de
+        # ~5 GB (con el 3B eran ~2 GB): comprueba que te cabe en el disco del
+        # pod antes de lanzarlo. Solo hace falta para la ruta de Ollama; la
+        # plataforma sirve el adapter/ directamente con vLLM y no lo necesita.
         model.save_pretrained_gguf("va91-gguf", tokenizer, quantization_method="q4_k_m")
         print("[ok] GGUF en ./va91-gguf/  -> descárgalo y úsalo en el Modelfile (FROM ...gguf)")
 

@@ -49,7 +49,7 @@ python -m venv .venv
 pip install -r requirements.txt
 
 # Ollama se instala aparte: https://ollama.com
-ollama pull qwen2.5:3b
+ollama pull qwen3:8b
 ```
 
 ## Los comandos del día
