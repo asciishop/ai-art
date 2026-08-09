@@ -60,6 +60,10 @@ const CFG = {
   FOV_H_GRADOS:  60,    // campo de visión horizontal típico de una webcam
   INVERTIR_GIRO: false, // si en la sala sale al revés, ponlo a true (o ?invertir=1)
   FPS: 8,               // 8 análisis por segundo sobran y no calientan el equipo
+  // Qué cámara usar. Vacío = la primera que NO parezca integrada, que en un
+  // portátil con webcam USB enchufada es justo la USB. Se puede forzar con
+  // ?cam=<trozo del nombre> o ?cam=<índice>, y queda guardado en el navegador.
+  CAMARA: '',
   // El guion de la sala. Cambiar de personaje es cambiar esta línea.
   QUIEN: { frente: 'zinc', derecha: 'va91', izquierda: 'ucron' },
 };
@@ -72,6 +76,14 @@ if (url.has('giro'))     CFG.GIRO_GRADOS = parseFloat(url.get('giro'));
 if (url.has('vuelta'))   CFG.VUELTA_GRADOS = parseFloat(url.get('vuelta'));
 if (url.has('poema'))    CFG.POEMA_MS = parseFloat(url.get('poema')) * 1000;
 if (url.has('mov'))      CFG.MOV_UMBRAL = parseFloat(url.get('mov'));
+// La cámara se recuerda entre sesiones: en una instalación se elige una vez con
+// ?cam=... y el kiosco ya arranca solo con la correcta, sin URL especial.
+if (url.has('cam')) {
+  CFG.CAMARA = url.get('cam');
+  try { localStorage.setItem('camara', CFG.CAMARA); } catch (e) {}
+} else {
+  try { CFG.CAMARA = localStorage.getItem('camara') || ''; } catch (e) {}
+}
 if (url.has('invertir')) CFG.INVERTIR_GIRO = url.get('invertir') !== '0';
 
 // Puntos de la malla de 478 vértices de MediaPipe que usamos.
@@ -372,6 +384,33 @@ function avisarGuion() {
   if (faltan.length) invitar('Ojo: ' + faltan.join(', ') + ' no está activo en personajes.yaml');
 }
 
+/** Decide qué cámara usar de las que haya conectadas.
+ *
+ * OJO: enumerateDevices() devuelve las etiquetas VACÍAS mientras no se haya
+ * concedido permiso de cámara. Por eso encender() pide primero un stream
+ * cualquiera —solo para obtener el permiso— y elige después.
+ */
+async function elegirCamara() {
+  const camaras = (await navigator.mediaDevices.enumerateDevices())
+                    .filter(d => d.kind === 'videoinput');
+  if (!camaras.length) return null;
+  console.info('Cámaras disponibles:',
+    camaras.map((c, i) => `[${i}] ${c.label || '(sin permiso aún)'}`).join(' · '));
+
+  const pref = (CFG.CAMARA || '').trim().toLowerCase();
+  if (pref) {
+    if (/^\d+$/.test(pref)) return camaras[Math.min(+pref, camaras.length - 1)];
+    const m = camaras.find(c => (c.label || '').toLowerCase().includes(pref));
+    if (m) return m;
+    console.warn(`Ninguna cámara contiene "${pref}"; uso la de por defecto.`);
+  }
+  // Por defecto, la primera que NO parezca la del propio equipo. Los nombres
+  // varían mucho entre fabricantes, así que esto es una heurística: si falla,
+  // se fuerza con ?cam= y queda guardado.
+  const integrada = /integrat|built.?in|internal|facetime|surface|hd user|webcam interna/i;
+  return camaras.find(c => c.label && !integrada.test(c.label)) || camaras[0];
+}
+
 let arrancando = false;
 
 async function encender() {
@@ -380,9 +419,27 @@ async function encender() {
   $stat.textContent = 'abriendo la cámara…';
   $panel.classList.add('viendo');
   try {
+    // 1) Un stream cualquiera, solo para que el navegador conceda el permiso y
+    //    con él las etiquetas de los dispositivos. Sin 'facingMode': pedir
+    //    'user' es justo lo que empuja al navegador hacia la cámara integrada.
     flujo = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480, facingMode: 'user' }, audio: false,
+      video: { width: 640, height: 480 }, audio: false,
     });
+
+    // 2) Ya con etiquetas, ¿es la que queremos? Si no, se cambia.
+    const quiero = await elegirCamara();
+    const puesta = flujo.getVideoTracks()[0].getSettings().deviceId;
+    if (quiero && quiero.deviceId && quiero.deviceId !== puesta) {
+      flujo.getTracks().forEach(t => t.stop());
+      flujo = await navigator.mediaDevices.getUserMedia({
+        video: { deviceId: { exact: quiero.deviceId }, width: 640, height: 480 },
+        audio: false,
+      });
+    }
+    const nombre = (flujo.getVideoTracks()[0].label || 'cámara').slice(0, 40);
+    $panel.title = 'Cámara: ' + nombre + '  ·  cámbiala con ?cam=<nombre o índice>';
+    console.info('Presencia usando:', nombre);
+
     $cam.srcObject = flujo;
     await $cam.play();
 

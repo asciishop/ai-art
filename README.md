@@ -291,6 +291,11 @@ index.html?cerca=0.6&fov=70&giro=25&vuelta=15&invertir=1
 - `giro` — los grados que exigen el cambio de personaje (por defecto `20`).
 - `poema` — segundos de silencio entre reclamos (por defecto `90`). **`?poema=0`
   lo desactiva** — útil en una prueba, o si la sala tiene mucho paso.
+- `cam` — qué cámara usar: un trozo del nombre (`?cam=logitech`) o su índice
+  (`?cam=1`). **Por defecto coge la primera que no parezca la integrada**, que
+  con una webcam USB enchufada es la USB. La elección **queda guardada en el
+  navegador**, así que se pone una vez y el kiosco ya arranca con esa. Los
+  nombres de las cámaras detectadas se listan en la consola (F12).
 - `mov` — fracción de las **bandas laterales** que debe moverse para lanzar el
   reclamo (por defecto `0.02`). El panel muestra `borde` y `centro` en vivo:
   míralos con la sala vacía (los dos cerca de 0) y con alguien cruzando por un
