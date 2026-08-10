@@ -32,10 +32,10 @@ node "SALA (instalacion fisica)" as SALA #FDF6E3 {
     node "Altavoz"        as SPK
 
     node "Navegador: Chrome o Edge\nexige HTTPS o localhost" as NAV #E3F2FD {
-      component "index.html\nchat + modo rayos X" as WEB
-      component "presencia.js\ncercania + giro de cabeza" as PRES
+      component "index.html\nchat + rayos X + cola de audio" as WEB
+      component "presencia.js\nMOVIMIENTO en los bordes -> reclamo\ncercania + giro de cabeza -> conversar" as PRES
       artifact  "vendor/\nMediaPipe WASM 9 MB\nface_landmarker.task 3,7 MB" as MODELCV
-      component "Web Speech API\nsintesis: local\nreconocimiento: remoto" as SPEECH
+      component "Web Speech API\ndictado + vigia de la orden ""para""\nsintesis: solo de RESERVA" as SPEECH
     }
   }
 }
@@ -49,11 +49,12 @@ cloud "Proxy HTTPS de RunPod\n<pod-id>-3000.proxy.runpod.net" as PROXY #E1F5FE
 ' ============================================================
 '  2. EL POD — el unico servidor
 ' ============================================================
-node "POD RunPod - GPU 24 GB - CUDA >= 12.8" as POD #E8F5E9 {
+node "POD RunPod - GPU >= 20 GB - CUDA >= 12.8" as POD #E8F5E9 {
 
   node "uvicorn :3000\nUNICO PUERTO EXPUESTO" as UVI {
     component "backend/main.py\nFastAPI: orquesta el turno" as BACK
     component "backend/memoria.py\nla memoria que escribe" as MEMO
+    component "backend/voz.py\nPiper + pedalboard (CPU)\nla voz de maquina que transmite" as VOZ
     component "tools/registro.py" as REGC
     artifact  "web/ servido como estatico" as WEBSRV
   }
@@ -62,12 +63,13 @@ node "POD RunPod - GPU 24 GB - CUDA >= 12.8" as POD #E8F5E9 {
 
   node "vLLM :8000\nINTERNO - no se expone" as VLLMNODE {
     component "OpenAI API server\nmulti-LoRA" as VLLM
-    artifact  "Qwen3-8B\nmodelo base: ~16,4 GB en VRAM\nrazonamiento DESACTIVADO" as BASE
+    artifact  "Qwen3-8B\n15,3 GiB de pesos en bf16\nrazonamiento DESACTIVADO" as BASE
   }
 
   node "Disco del pod (/workspace)" as DISCO {
     artifact  "personajes/*/adapter/\n3 LoRA, ~100 MB c/u" as LORAS
-    artifact  "personajes.yaml\nREGISTRO CENTRAL" as YAML
+    artifact  "voces/*.onnx\nmodelos Piper (se bajan solos)" as VOCES
+    artifact  "personajes.yaml\nREGISTRO CENTRAL\n+ diales de voz por personaje" as YAML
     artifact  "personajes/*/system_prompt.md" as SYSP
     database  "vector_store/chroma.sqlite3\ncanon: *_mem\nvivido: *_exp" as CHROMA
     database  "vector_store/archivo.db\nSQLite: intercambios crudos" as SQLITE
@@ -86,29 +88,31 @@ INGEST ..> CHROMA : ""--todos --reset""\nindexa el canon
 ' ============================================================
 '  Runtime: un turno de conversacion
 ' ============================================================
-USER --> CAM : se acerca a < 0,5 m\ny gira la cabeza
-USER --> MIC : habla
-SPK --> USER : le responde en voz alta
+USER --> CAM : pasa de largo,\nse acerca, gira la cabeza
+USER --> MIC : habla, o dice ""para""
+SPK --> USER : poemas y respuestas\nen voz alta
 
 CAM --> PRES     : MediaStream\n(no sale del navegador)
 PRES --> MODELCV : carga WASM + modelo
-PRES --> WEB     : elige personaje\ny abre el micro
-WEB --> SPEECH   : hablar() / escuchar()
+PRES --> WEB     : borde -> poema al azar\ncerca -> saluda y abre el micro\ngiro -> cambia de guardian
+WEB --> SPEECH   : escuchar() / vigilar()
 MIC --> SPEECH
 SPEECH ..> STT   : HTTPS: audio del visitante\n(UNICA salida a internet)
-SPEECH --> SPK   : sintesis local\n(pitch/rate por personaje)
+WEB --> SPK      : reproduce el WAV del pod,\nfrase a frase
 
 NAV   --> PROXY : HTTPS\nsin origen seguro no hay\ncamara ni microfono
-PROXY --> UVI   : reenvia al :3000 del pod\nGET /  y  /web/* (html, js, wasm, .task)\nGET /api/personajes\nPOST /api/chat -> SSE en streaming
+PROXY --> UVI   : reenvia al :3000 del pod\nGET /  y  /web/* (html, js, wasm, .task)\nGET /api/personajes  ·  GET /api/voz/estado\nPOST /api/chat -> SSE en streaming\nPOST /api/voz  -> WAV ya procesado
 
-BACK --> REGC   : que LoRA, coleccion y prompt
+BACK --> REGC   : que LoRA, coleccion,\nprompt y diales de voz
 REGC --> YAML
 REGC --> SYSP
 BACK --> CHROMA : RAG: canon + vivido
 BACK --> VLLM   : HTTP localhost:8000\nmodel = LoRA del personaje
 VLLM --> BASE
 VLLM --> LORAS  : carga los 3 adaptadores
-BACK --> MEMO   : al cerrar el turno
+BACK --> VOZ    : una frase cada vez
+VOZ --> VOCES   : carga el modelo Piper\ndel personaje
+BACK --> MEMO   : al cerrar el turno\n(salvo el poema: recordar=false)
 MEMO --> SQLITE : archiva el intercambio crudo
 MEMO --> VLLM   : destila el recuerdo\n(modelo BASE, sin LoRA)
 MEMO --> CHROMA : guarda el recuerdo en *_exp
@@ -122,13 +126,29 @@ note right of VLLMNODE
 end note
 
 note bottom of STT
-  El reconocimiento de voz del
-  navegador SI sale a internet.
-  Para una sala sin red -o para
-  no ceder el audio- sustituir
-  por faster-whisper en el pod.
-  La sintesis y toda la vision
-  por webcam son 100% locales.
+  La UNICA salida a internet de
+  toda la obra: el reconocimiento
+  de voz del navegador. Para una
+  sala sin red -o para no ceder el
+  audio- sustituir por
+  faster-whisper en el pod.
+
+  Lo demas es local: la vision por
+  webcam corre en la pestaña, y la
+  VOZ se sintetiza en el pod. La
+  del navegador solo entra si falta
+  piper o pedalboard, para que la
+  sala nunca se quede muda.
+end note
+
+note bottom of VOZ
+  La voz del navegador NO se puede
+  procesar: va directa a la tarjeta
+  de sonido y no hay nodo de audio
+  que interceptar. Por eso para que
+  suene a maquina que transmite hay
+  que sintetizar aqui.
+  Es CPU pura, no toca la GPU.
 end note
 
 @enduml
