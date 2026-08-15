@@ -685,6 +685,13 @@ function hablando() {
 // hablar(): sin servidor, sin claves, sin descargas. Chrome y Edge lo tienen;
 // Firefox todavía no, y allí el botón simplemente desaparece.
 // Requiere HTTPS (o localhost) para que el navegador dé acceso al micrófono.
+//
+// QUÉ MICRÓFONO USA: el predeterminado del sistema, y no hay manera de decirle
+// otro — la Web Speech API no acepta deviceId, a diferencia de getUserMedia. En
+// la sala el bueno es el de la webcam USB (está donde el visitante; el del
+// portátil, a un metro y mirando a otro lado), así que hay que ponerlo como
+// predeterminado en Windows › Sonido › Entrada. web/presencia.js lo comprueba al
+// arrancar y avisa en el rótulo si está puesto el otro.
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 const PLACEHOLDER = $inp.placeholder;
 let rec = null, oyendo = false, dictado = '';

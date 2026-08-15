@@ -34,11 +34,73 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import memoria  # noqa: E402  (memoria que ESCRIBE: SQLite + experiencias)
 import voz      # noqa: E402  (síntesis local + efectos: la voz de la obra)
 
+# --- .env ----------------------------------------------------------------
+
+def _cargar_env(ruta: str):
+    """Lee un .env sencillo (CLAVE=valor), sin dependencias nuevas.
+
+    Lo que YA esté en el entorno manda sobre el fichero (setdefault): así el
+    pod puede sobreescribir con un `export` sin editar nada, y el .env sirve de
+    valor por defecto cómodo para trabajar en local.
+    """
+    if not os.path.exists(ruta):
+        return
+    with open(ruta, encoding="utf-8") as f:
+        for linea in f:
+            linea = linea.strip()
+            if not linea or linea.startswith("#") or "=" not in linea:
+                continue
+            clave, valor = linea.split("=", 1)
+            os.environ.setdefault(clave.strip(), valor.strip().strip('"').strip("'"))
+
+
+_cargar_env(os.path.join(registro.RAIZ, ".env"))
+
+def _es_local(url: str) -> bool:
+    """¿Al otro lado hay un vLLM nuestro, o un proveedor externo?
+
+    Cambia dos cosas: los proveedores externos no entienden
+    'chat_template_kwargs' (extensión de vLLM, devuelven 400) y suelen querer
+    cabeceras de identificación de la app.
+    """
+    return any(x in url for x in ("localhost", "127.0.0.1", "://0.0.0.0"))
+
+
 # --- Config --------------------------------------------------------------
 VLLM_URL = os.environ.get("VLLM_URL", "http://localhost:8000/v1/chat/completions")
 # Si vLLM arrancó con --api-key, hay que enviarla. Se pasa por variable de
 # entorno (VLLM_API_KEY); si no está, no se manda cabecera (vLLM sin auth).
 VLLM_API_KEY = os.environ.get("VLLM_API_KEY", "").strip()
+CHAT_LOCAL = _es_local(VLLM_URL)
+
+# Qué modelo habla por los personajes.
+#   vacío  -> el LoRA de cada uno (pers.lora_texto). Es lo que da su voz.
+#   puesto -> ese modelo para los TRES, y la voz la sostiene solo el system
+#             prompt. Necesario al servir desde un proveedor externo, que no
+#             sabe nada de tus adaptadores.
+#
+# Admite una LISTA separada por comas. OpenRouter la recibe como cadena de
+# reserva: si el primero devuelve 429 o está caído, prueba el siguiente sin que
+# el visitante se entere. Es lo que hace usable un modelo ':free' en una sala,
+# porque los gratuitos comparten capacidad y se saturan sin avisar.
+MODELO_CHAT = os.environ.get("MODELO_CHAT", "").strip()
+
+
+def _campo_modelo(spec: str, por_defecto: str = "") -> dict:
+    """Convierte 'a' o 'a, b, c' en el campo que espera la API.
+
+    Uno solo -> {"model": "a"}          (lo entiende cualquier proveedor)
+    Varios   -> {"models": [...]}       (cadena de reserva de OpenRouter)
+    """
+    nombres = [m.strip() for m in (spec or "").split(",") if m.strip()]
+    if not nombres:
+        return {"model": por_defecto}
+    if len(nombres) == 1:
+        return {"model": nombres[0]}
+    return {"models": nombres}
+
+APP_URL = os.environ.get("APP_URL", "https://github.com/asciishop/ai-art")
+APP_NOMBRE = os.environ.get("APP_NOMBRE", "Guardianes")
 DB_DIR = os.path.join(registro.RAIZ, "vector_store")
 WEB_DIR = os.path.join(registro.RAIZ, "web")
 EMBED_MODEL = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
@@ -54,18 +116,57 @@ MODELO_BASE = os.environ.get("MODELO_BASE", "Qwen/Qwen3-8B")  # para destilar
 SQLITE_PATH = os.path.join(registro.RAIZ, "vector_store", "archivo.db")
 RECORDAR = os.environ.get("RECORDAR", "1") != "0"   # poner RECORDAR=0 para desactivar
 
+# --- Modelo externo para lo ANALÍTICO (opcional) -------------------------
+# Destilar el recuerdo no es una tarea de voz, es un juicio: "resume esto en
+# una frase, o di NADA si es trivial". Ahí un modelo grande gana, y como ocurre
+# DESPUÉS de que el visitante ya escuchó la respuesta, su latencia es invisible.
+#
+# Rellenando estas tres variables (ver .env.ejemplo) esa parte —y SOLO esa— se
+# va a un proveedor externo tipo OpenRouter. Vacías, todo sigue como hasta hoy
+# contra el vLLM del pod.
+#
+# Los PERSONAJES nunca salen de aquí: su voz son los LoRA, y eso no se puede
+# subcontratar. Además, cada palabra del visitante que saliera del pod sería
+# una decisión de privacidad, no de arquitectura.
+MEMORIA_URL = os.environ.get("MEMORIA_URL", "").strip() or VLLM_URL
+MEMORIA_API_KEY = os.environ.get("MEMORIA_API_KEY", "").strip() or VLLM_API_KEY
+MEMORIA_MODELO = os.environ.get("MEMORIA_MODELO", "").strip() or MODELO_BASE
+MEMORIA_REMOTA = MEMORIA_URL != VLLM_URL
+
 # --- Estado global (se carga UNA vez al arrancar) ------------------------
 app = FastAPI(title="Plataforma multi-personaje")
 _ef = embedding_functions.SentenceTransformerEmbeddingFunction(model_name=EMBED_MODEL)
 _chroma = chromadb.PersistentClient(path=DB_DIR)
 _colecciones = {}   # cache de colecciones por nombre
 
-# Cabecera de auth para vLLM (la reusan chat y la destilación de memoria)
-_HEADERS = {"Authorization": f"Bearer {VLLM_API_KEY}"} if VLLM_API_KEY else {}
+def _cabeceras(api_key: str, local: bool) -> dict:
+    h = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+    if not local:
+        # OpenRouter usa estas dos para identificar la app. Son opcionales,
+        # pero las pide en su documentación.
+        h["HTTP-Referer"] = APP_URL
+        h["X-Title"] = APP_NOMBRE
+    return h
+
+
+# Cabeceras del chat de los personajes y del endpoint analítico. Pueden apuntar
+# a sitios distintos: la voz en el pod y el juicio fuera, o todo fuera.
+_HEADERS = _cabeceras(VLLM_API_KEY, CHAT_LOCAL)
+_HEADERS_MEM = _cabeceras(MEMORIA_API_KEY, not MEMORIA_REMOTA)
+
+if not CHAT_LOCAL:
+    print(f"[chat] personajes con {MODELO_CHAT or '(SIN MODELO_CHAT: fallara)'} en {VLLM_URL}")
+    if not MODELO_CHAT:
+        print("[chat] AVISO: sin MODELO_CHAT se mandaria 'va91-text' a un proveedor "
+              "externo, que no conoce tus LoRA. Pon MODELO_CHAT en el .env.")
+if MEMORIA_REMOTA:
+    print(f"[memoria] destilando con {MEMORIA_MODELO} en {MEMORIA_URL}")
 
 # Arranca la memoria que escribe (SQLite + colecciones de experiencias)
 if RECORDAR:
-    memoria.init(_chroma, _ef, VLLM_URL, _HEADERS, MODELO_BASE, SQLITE_PATH)
+    memoria.init(_chroma, _ef, MEMORIA_URL, _HEADERS_MEM,
+                 _campo_modelo(MEMORIA_MODELO, MODELO_BASE), SQLITE_PATH,
+                 local=CHAT_LOCAL and not MEMORIA_REMOTA)
 
 
 def _coleccion(nombre: str):
@@ -113,13 +214,33 @@ def recuperar_contexto(pers, pregunta: str):
     return "\n\n---\n\n".join(pasan), traza
 
 
+# Sin LoRA que sostenga al personaje, un modelo pequeño se sale del papel y
+# contesta con su proceso ("Here's a thinking process: 1. Analyze user input…")
+# o con "como IA, …". Los adaptadores entrenados nunca hacían esto: lo habían
+# aprendido de 298 conversaciones donde Zinc siempre habla como Zinc. Con solo
+# el system prompt hay que pedirlo explícitamente.
+GUARDA_PAPEL = (
+    "\n\n---\nREGLAS DE FORMA (nunca las menciones ni las expliques):\n"
+    "- Responde SIEMPRE en español, SIEMPRE en primera persona, como el personaje.\n"
+    "- Empieza directamente con sus palabras. Nada de preámbulos.\n"
+    "- NO analices la petición, no enumeres pasos, no describas tu proceso ni "
+    "tu razonamiento, y no hables de ti como modelo o asistente.\n"
+    "- Si no sabes algo de tu mundo, respóndelo desde tu carácter; no salgas de él."
+)
+
+
 def construir_mensajes(pers, mensaje: str, historial: list):
     """system[personaje] + historial reciente + turno actual (con RAG).
 
     Devuelve (mensajes, traza_rag): los mensajes que se envían al modelo y el
     detalle de lo consultado en la memoria (ver recuperar_contexto).
     """
-    mensajes = [{"role": "system", "content": pers.system_prompt_texto()}]
+    sistema = pers.system_prompt_texto()
+    if not CHAT_LOCAL:
+        # Solo fuera: con el LoRA puesto sobra, y añadirlo ensuciaría el prompt
+        # que el adaptador ya sabe leer.
+        sistema += GUARDA_PAPEL
+    mensajes = [{"role": "system", "content": sistema}]
     for h in historial[-MAX_HISTORIAL:]:
         if h.get("role") in ("user", "assistant") and h.get("content"):
             mensajes.append({"role": h["role"], "content": h["content"]})
@@ -302,23 +423,37 @@ async def chat(entrada: ChatIn):
         raise HTTPException(403, "Personaje no disponible")
 
     mensajes, traza_rag = construir_mensajes(pers, entrada.mensaje, entrada.historial)
+    # Con vLLM, este campo elige el LoRA y ES la voz del personaje. Con un
+    # proveedor externo no existen los LoRA: los tres comparten modelo y la voz
+    # la sostiene entera el system prompt.
+    campo = _campo_modelo(MODELO_CHAT, pers.lora_texto)
+    modelo = ", ".join(campo.get("models", [campo.get("model", "")]))  # para rayos X
     payload = {
-        "model": pers.lora_texto,     # <-- selecciona el LoRA en vLLM
+        **campo,
         "messages": mensajes,
         "stream": True,
         "temperature": 0.85,
         "top_p": 0.9,
         "max_tokens": 350,
+    }
+    if not CHAT_LOCAL:
+        # Apagar el razonamiento en el proveedor. 'effort: none' lo desactiva y
+        # 'exclude' impide que vuelva en la respuesta si el modelo insiste.
+        # OJO: esto NO arregla al modelo que escribe su proceso como si fuera la
+        # respuesta (llega en 'content', no en 'reasoning_details'). Contra eso
+        # está la guarda del system prompt y, sobre todo, elegir otro modelo.
+        payload["reasoning"] = {"effort": "none", "exclude": True}
+    if CHAT_LOCAL:
         # Qwen3 es un modelo HÍBRIDO: por defecto razona en voz alta dentro de
         # un bloque <think>…</think> antes de responder. Un personaje no piensa
         # en público, así que se apaga. Sin esto, la sala vería el razonamiento
         # en pantalla y el altavoz lo leería en alto.
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
+        # Fuera solo se manda a un vLLM: es extensión suya y un proveedor
+        # externo puede rechazar la peticion entera. Si el modelo remoto razona,
+        # queda el filtro SinPensamiento de abajo.
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
 
-    headers = {}
-    if VLLM_API_KEY:
-        headers["Authorization"] = f"Bearer {VLLM_API_KEY}"
+    headers = _HEADERS
 
     async def generar():
         # RAYOS X — se manda ANTES de la primera palabra, para que se vea que
@@ -326,7 +461,7 @@ async def chat(entrada: ChatIn):
         if entrada.rayosx:
             yield "data: " + json.dumps({"rayosx": {
                 "personaje": {"id": pers.id, "nombre": pers.nombre,
-                              "lora": pers.lora_texto, "base": MODELO_BASE,
+                              "lora": modelo, "base": MEMORIA_MODELO,
                               "coleccion": pers.coleccion},
                 "system_prompt": pers.system_prompt_texto(),
                 "rag": {"fragmentos": traza_rag, "umbral": UMBRAL,

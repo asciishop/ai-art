@@ -1,46 +1,88 @@
 @startuml secuencia-conversacion
-title Flujo de una conversacion entre componentes
+title Un turno de conversacion - texto en OpenRouter, voz y memoria en la sala
 
 skinparam shadowing false
 skinparam sequenceMessageAlign center
+skinparam BoxPadding 8
 
 actor "Visitante" as USER
 participant "Web\n(index.html)" as WEB
-participant "Backend\n(main.py)" as BACK
-database "ChromaDB\n(canon + _exp)" as CHROMA
-participant "vLLM\n(base + LoRAs)" as VLLM
-participant "Memoria\n(memoria.py)" as MEMO
-database "SQLite\n(archivo.db)" as SQLITE
+
+box "Equipo de sala - sin GPU" #E8F5E9
+  participant "Backend\n(main.py)" as BACK
+  database "ChromaDB\ncanon + _exp" as CHROMA
+  participant "Voz\n(voz.py: Piper + efectos)" as VOZ
+  participant "Memoria\n(memoria.py)" as MEMO
+  database "SQLite\n(archivo.db)" as SQLITE
+end box
+
+box "OpenRouter" #E1F5FE
+  participant "Modelo del CHAT\nnemotron -> laguna-s -> ling-tiny" as ORCHAT
+  participant "Modelo de MEMORIA\nlfm-2.6b -> ling-tiny" as ORMEM
+end box
 
 == El visitante habla ==
-USER -> WEB : escribe un mensaje
-WEB -> BACK : POST /api/chat\n{personaje, mensaje, historial}
+USER -> WEB : escribe, o dicta con el microfono
+WEB -> BACK : POST /api/chat\n{personaje, mensaje, historial, rayosx}
 
-== El backend prepara el turno ==
-BACK -> BACK : registro -> LoRA, coleccion,\nsystem prompt del personaje
-BACK -> CHROMA : buscar contexto\n(canon + experiencias)
-CHROMA --> BACK : fragmentos relevantes
-BACK -> BACK : arma el prompt\n(identidad + contexto + mensaje)
+== El backend arma el turno ==
+BACK -> BACK : registro -> coleccion y system prompt
+BACK -> CHROMA : buscar contexto (canon + vivido)
+CHROMA --> BACK : fragmentos con su distancia
+note right of BACK
+  Al system prompt se le anade GUARDA_PAPEL:
+  "responde en primera persona, no analices
+  la peticion, no describas tu proceso".
+  Con el LoRA sobraba —lo habia aprendido de
+  298 conversaciones—; sin el, hay que pedirlo.
+end note
 
-== vLLM responde en streaming ==
-BACK -> VLLM : /v1/chat/completions\n(model = LoRA del personaje, stream)
-loop por cada token
-    VLLM --> BACK : token
-    BACK --> WEB : SSE data: {token}
-    WEB --> USER : va apareciendo la respuesta
+alt rayosx = true
+  BACK --> WEB : SSE {"rayosx": {...}}
+  WEB --> USER : la columna derecha ya muestra\ncon QUE se va a construir la respuesta
 end
-VLLM --> BACK : [DONE]
-BACK --> WEB : SSE [DONE]
 
-== La obra recuerda (en segundo plano) ==
+== Responde el modelo remoto ==
+BACK -> ORCHAT : /v1/chat/completions\nmodels[] = cadena de reserva\nreasoning: {effort:"none", exclude:true}
+note right of ORCHAT
+  models[] y no model: si el primero
+  devuelve 429 —los ':free' comparten
+  capacidad— se prueba el siguiente.
+  Los 3 personajes usan el MISMO modelo:
+  ya no hay LoRA que los separe.
+end note
+
+loop por cada token
+  ORCHAT --> BACK : delta.content
+  BACK -> BACK : filtro SinPensamiento\n(descarta <think>...</think>)
+  BACK --> WEB : SSE {"t": trozo}
+  WEB --> USER : la respuesta va apareciendo
+end
+BACK --> WEB : SSE {"fin": true}
+
+== La voz, frase a frase ==
+loop por cada frase
+  WEB -> BACK : POST /api/voz
+  BACK -> VOZ : sintetizar(texto, androide, lejania)
+  VOZ --> BACK : WAV ya procesado
+  BACK --> WEB : audio/wav
+  WEB --> USER : suena mientras se prepara\nla frase siguiente
+end
+
+== La obra recuerda ==
 BACK ->> MEMO : recordar(pregunta, respuesta)
 activate MEMO
-MEMO -> SQLITE : archivar intercambio crudo
-MEMO -> VLLM : destilar\n(modelo base -> 1 recuerdo)
-VLLM --> MEMO : recuerdo (o "NADA")
+MEMO -> SQLITE : archivar el intercambio crudo
+MEMO -> ORMEM : destilar -> 1 frase, o "NADA"
+ORMEM --> MEMO : recuerdo (o NADA)
 alt hay recuerdo y no es duplicado
-    MEMO -> CHROMA : guardar en _exp del personaje
+  MEMO -> CHROMA : guardar en _exp del personaje
 end
 deactivate MEMO
+note left of MEMO
+  El poema del reclamo llega con
+  recordar=false y NO pasa por aqui:
+  es un grito al aire, no un encuentro.
+end note
 
 @enduml

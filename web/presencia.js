@@ -61,12 +61,13 @@ const CFG = {
   INVERTIR_GIRO: false, // si en la sala sale al revés, ponlo a true (o ?invertir=1)
   FPS: 8,               // 8 análisis por segundo sobran y no calientan el equipo
   // Qué cámara usar. Cuatro formas, y se puede forzar con ?cam=… :
-  //   'integrada'  la del propio equipo  <- por defecto
-  //   'usb'        la primera que NO sea la integrada
+  //   'usb'        la primera que NO sea la integrada  <- por defecto
+  //   'integrada'  la del propio equipo
   //   'logitech'   cualquier trozo del nombre del dispositivo
   //   '1'          por índice en la lista
-  // La elección queda guardada en el navegador.
-  CAMARA: 'integrada',
+  // La elección queda guardada en el navegador. En la sala la webcam USB es la
+  // que está colocada y encuadrada; la integrada del portátil mira a otro sitio.
+  CAMARA: 'usb',
   // El guion de la sala. Cambiar de personaje es cambiar esta línea.
   QUIEN: { frente: 'zinc', derecha: 'va91', izquierda: 'ucron' },
 };
@@ -85,8 +86,20 @@ if (url.has('cam')) {
   CFG.CAMARA = url.get('cam');
   try { localStorage.setItem('camara', CFG.CAMARA); } catch (e) {}
 } else {
-  // Si no hay nada guardado se conserva el valor por defecto de CFG, no ''.
-  try { CFG.CAMARA = localStorage.getItem('camara') || CFG.CAMARA; } catch (e) {}
+  try {
+    // Los equipos donde ya se probó la obra tienen guardado 'integrada', que era
+    // el valor por defecto anterior, y sin esto seguirían abriendo esa cámara
+    // para siempre. Se descarta UNA sola vez; un ?cam=integrada posterior vuelve
+    // a guardarse y se respeta.
+    if (!localStorage.getItem('camara_usb_por_defecto')) {
+      if ((localStorage.getItem('camara') || '').trim().toLowerCase() === 'integrada') {
+        localStorage.removeItem('camara');
+      }
+      localStorage.setItem('camara_usb_por_defecto', '1');
+    }
+    // Si no hay nada guardado se conserva el valor por defecto de CFG, no ''.
+    CFG.CAMARA = localStorage.getItem('camara') || CFG.CAMARA;
+  } catch (e) {}
 }
 if (url.has('invertir')) CFG.INVERTIR_GIRO = url.get('invertir') !== '0';
 
@@ -388,65 +401,231 @@ function avisarGuion() {
   if (faltan.length) invitar('Ojo: ' + faltan.join(', ') + ' no está activo en personajes.yaml');
 }
 
-/** Decide qué cámara usar de las que haya conectadas.
+let avisoCamara = null;   // lo rellena elegirCamara(); lo muestra encender()
+
+/** Las cámaras que el navegador deja ver ahora mismo.
  *
  * OJO: enumerateDevices() devuelve las etiquetas VACÍAS mientras no se haya
- * concedido permiso de cámara. Por eso encender() pide primero un stream
- * cualquiera —solo para obtener el permiso— y elige después.
+ * concedido permiso de cámara, y sin etiquetas no se puede distinguir la USB de
+ * la integrada. Por eso encender() mira si YA hay nombres: si los hay abre
+ * directamente la buena, y si no, pide un stream cualquiera solo para conseguir
+ * el permiso. Ese es el único caso en que se enciende la cámara equivocada.
  */
-async function elegirCamara() {
+async function camarasVisibles() {
   const camaras = (await navigator.mediaDevices.enumerateDevices())
                     .filter(d => d.kind === 'videoinput');
-  if (!camaras.length) return null;
   console.info('Cámaras disponibles:',
     camaras.map((c, i) => `[${i}] ${c.label || '(sin permiso aún)'}`).join(' · '));
-
-  // Los nombres varían mucho entre fabricantes, así que 'integrada'/'usb' son
-  // una heurística sobre la etiqueta. Si acierta mal, se fuerza por nombre o
-  // por índice —eso sí es exacto— y queda guardado.
-  const ESINTEGRADA = /integrat|built.?in|internal|facetime|surface|hd user|webcam interna/i;
-  const pref = (CFG.CAMARA || '').trim().toLowerCase();
-
-  if (pref === 'integrada') {
-    return camaras.find(c => ESINTEGRADA.test(c.label || '')) || camaras[0];
-  }
-  if (pref === 'usb' || pref === 'externa') {
-    return camaras.find(c => c.label && !ESINTEGRADA.test(c.label)) || camaras[0];
-  }
-  if (pref) {
-    if (/^\d+$/.test(pref)) return camaras[Math.min(+pref, camaras.length - 1)];
-    const m = camaras.find(c => (c.label || '').toLowerCase().includes(pref));
-    if (m) return m;
-    console.warn(`Ninguna cámara contiene "${pref}"; uso la primera de la lista.`);
-  }
-  return camaras[0];
+  return camaras;
 }
 
+// Los nombres varían mucho entre fabricantes, así que 'integrada'/'usb' son una
+// heurística sobre la etiqueta. Si acierta mal, se fuerza por nombre o por
+// índice —eso sí es exacto— y queda guardado.
+const ESINTEGRADA = /integrat|built.?in|internal|facetime|surface|easy ?camera|hd user|webcam interna|c[áa]mara integrada|chicony|sunplus/i;
+const esIntegrada = c => ESINTEGRADA.test((c && c.label) || '');
+
+/** Ordena las cámaras por preferencia: la primera es la que más queremos.
+ *
+ * Devuelve TODAS y no solo la elegida, y eso es lo importante. La lista de
+ * Windows viene llena de FANTASMAS: "USB Camera", "USB2.0 PC CAMERA"… entradas
+ * que quedaron de webcams enchufadas alguna vez y que el sistema sigue
+ * ofreciendo aunque no haya nada al otro lado. Por el nombre no hay manera de
+ * distinguirlas —suenan más a USB que la buena, que se llama "HD 2MP WEBCAM"—,
+ * así que la única prueba que vale es intentar abrirlas: la que abre, existe.
+ *
+ * De ahí que esto ordene en vez de decidir. Encender() baja por la lista hasta
+ * que una responde. Al final van TODAS las demás, la integrada incluida: tuerta
+ * es mejor que ciega, pero solo después de haberlo intentado con las buenas.
+ */
+function ordenarCamaras(camaras) {
+  const pref = (CFG.CAMARA || '').trim().toLowerCase();
+  let preferidas;
+
+  if (/^\d+$/.test(pref)) {
+    preferidas = [camaras[Math.min(+pref, camaras.length - 1)]];
+  } else if (pref === 'integrada') {
+    preferidas = camaras.filter(esIntegrada);
+  } else if (pref === 'usb' || pref === 'externa' || !pref) {
+    // Con nombre y que no suene a integrada. Las que no tienen nombre van
+    // detrás: sin etiqueta no se puede afirmar nada de ellas.
+    preferidas = camaras.filter(c => c.label && !esIntegrada(c));
+  } else {
+    preferidas = camaras.filter(c => (c.label || '').toLowerCase().includes(pref));
+    if (!preferidas.length) {
+      console.warn(`Ninguna cámara contiene "${pref}"; pruebo por orden de lista.`);
+    }
+  }
+
+  const orden = [...preferidas, ...camaras.filter(c => !preferidas.includes(c))];
+  console.info('Orden de preferencia:',
+    orden.map(c => c.label || '(sin nombre)').join(' → '));
+  return orden;
+}
+
+/** ¿Está puesto el micrófono USB de la sala, o el del portátil?
+ *
+ * LÍMITE DEL NAVEGADOR, y conviene saberlo antes de buscar el fallo aquí: el
+ * reconocimiento de voz (Web Speech API, en index.html) NO acepta que se le
+ * diga qué micrófono usar. No hay deviceId que valga: siempre coge el
+ * PREDETERMINADO del sistema. Desde este archivo es imposible forzarlo.
+ *
+ * Así que se hace lo único que sí se puede: comprobarlo y decirlo. El arreglo
+ * es de una vez y en Windows —Configuración › Sonido › Entrada, elegir el micro
+ * de la webcam como predeterminado—, pero sin este aviso la sala solo da la
+ * pista de que "se oye raro" y nadie sabe por qué.
+ *
+ * La forma fiable de reconocer el micro de la webcam no es el nombre: es el
+ * groupId. El navegador da el MISMO groupId a la cámara y al micrófono del
+ * mismo aparato físico, así que se pregunta por el de la cámara ya elegida.
+ */
+async function comprobarMicro(camara) {
+  const micros = (await navigator.mediaDevices.enumerateDevices())
+                   .filter(d => d.kind === 'audioinput');
+  // 'default' y 'communications' son alias de Windows, no aparatos: apuntan a
+  // otra entrada de la lista, y esa es la que tiene nombre propio.
+  const real = m => m.deviceId !== 'default' && m.deviceId !== 'communications';
+  const fisicos = micros.filter(real);
+  if (!fisicos.length) return 'No hay ningún micrófono conectado.';
+  if (!fisicos.some(m => m.label)) return null;   // sin permiso: nada que comparar
+
+  console.info('Micrófonos:', fisicos.map((m, i) => `[${i}] ${m.label}`).join(' · '));
+
+  const alias = micros.find(m => m.deviceId === 'default');
+  const puesto = (alias && fisicos.find(m => m.groupId === alias.groupId)) || fisicos[0];
+
+  // Primero por groupId, que es exacto: el micro incorporado a la webcam. Pero
+  // MUCHAS webcams no llevan micro —la de esta sala, sin ir más lejos— y el que
+  // hay junto a ella es otro aparato USB independiente, con su propio groupId.
+  // Así que si no hay incorporado se busca por nombre: cualquiera que no sea el
+  // del portátil (Realtek y compañía son las tarjetas de audio integradas).
+  const ESINTEGRADO = /realtek|high definition audio|integrat|internal|built.?in|conexant|matriz de micr|microphone array/i;
+  const dela = (camara && camara.groupId
+                 && fisicos.find(m => m.groupId === camara.groupId))
+            || fisicos.find(m => m.label && !ESINTEGRADO.test(m.label));
+
+  if (!dela) {
+    console.warn('No distingo ningún micrófono externo; se oirá por:',
+      puesto && puesto.label);
+    return null;
+  }
+  if (puesto && puesto.deviceId === dela.deviceId) {
+    console.info('Micrófono en uso (el externo, el bueno):', dela.label);
+    return null;
+  }
+  console.warn('El micrófono PREDETERMINADO es "' + (puesto ? puesto.label : '?')
+    + '", no el externo ("' + dela.label + '"). El reconocimiento de voz '
+    + 'del navegador no deja elegirlo desde la página: cámbialo en Windows › '
+    + 'Configuración › Sonido › Entrada.');
+  return 'Se está oyendo por el micro del equipo, no por el USB: '
+       + 'cámbialo en Sonido › Entrada.';
+}
+
+let avisoMicro = null;
 let arrancando = false;
+
+/** Abrir UNA cámara concreta, insistiendo antes de darla por perdida.
+ *
+ * `NotReadableError` en Windows no significa solo "ocupada": es el error que da
+ * Chrome cuando no consigue ARRANCAR la fuente de vídeo, y una webcam UVC barata
+ * la provoca con facilidad si se le pide un formato que su driver no sirve de
+ * buena gana. La HD 2MP WEBCAM de la sala entrega 1920x1080; pedirle 640x480 es
+ * razonable —menos píxeles que analizar— pero no vale la pena morir por ello.
+ *
+ * De ahí la escalera: primero lo cómodo, luego lo que sea. El resto del archivo
+ * no depende de la resolución (la distancia se mide con $cam.videoWidth y el
+ * movimiento sobre una miniatura de 64x48), así que aceptar 1080p no rompe nada.
+ */
+async function abrirCamara(dev) {
+  const id = { deviceId: { exact: dev.deviceId } };
+  const intentos = [
+    { video: id, audio: false },                                  // su formato nativo
+    { video: { ...id, width: 640, height: 480 }, audio: false },  // por si acaso
+  ];
+  let ultimo;
+  for (const peticion of intentos) {
+    try {
+      return await navigator.mediaDevices.getUserMedia(peticion);
+    } catch (e) {
+      ultimo = e;
+      if (e.name === 'NotAllowedError') throw e;   // sin permiso no hay insistencia
+      console.warn('  no abre con', JSON.stringify(peticion.video), '→', e.name);
+    }
+  }
+  throw ultimo;
+}
 
 async function encender() {
   if (arrancando || activo) return;
   arrancando = true;
+  avisoCamara = avisoMicro = null;   // de un intento anterior fallido
   $stat.textContent = 'abriendo la cámara…';
   $panel.classList.add('viendo');
+  const VIDEO = { width: 640, height: 480 };
   try {
-    // 1) Un stream cualquiera, solo para que el navegador conceda el permiso y
-    //    con él las etiquetas de los dispositivos. Sin 'facingMode': pedir
-    //    'user' es justo lo que empuja al navegador hacia la cámara integrada.
-    flujo = await navigator.mediaDevices.getUserMedia({
-      video: { width: 640, height: 480 }, audio: false,
-    });
+    // 1) ¿Se puede decidir YA? Si el permiso está concedido de una visita
+    //    anterior, enumerateDevices() da los nombres sin abrir nada, y se abre
+    //    directamente la buena. Esto es lo normal en la sala, y así la integrada
+    //    no llega a encenderse ni un segundo.
+    let camaras = await camarasVisibles();
 
-    // 2) Ya con etiquetas, ¿es la que queremos? Si no, se cambia.
-    const quiero = await elegirCamara();
-    const puesta = flujo.getVideoTracks()[0].getSettings().deviceId;
-    if (quiero && quiero.deviceId && quiero.deviceId !== puesta) {
-      flujo.getTracks().forEach(t => t.stop());
-      flujo = await navigator.mediaDevices.getUserMedia({
-        video: { deviceId: { exact: quiero.deviceId }, width: 640, height: 480 },
-        audio: false,
-      });
+    if (!camaras.some(c => c.label)) {
+      // Primera vez en este equipo: sin permiso no hay nombres, y sin nombres no
+      // hay forma de distinguirlas. Toca abrir una cualquiera —el navegador dará
+      // la integrada— solo para que conceda el permiso. Se cierra enseguida.
+      //
+      // Se pide también el AUDIO, aunque aquí no se grabe ni un segundo: con
+      // ello el navegador concede los dos permisos de una vez —el
+      // reconocimiento de voz ya no vuelve a preguntar, que en un kiosco sin
+      // teclado importa— y aparecen los NOMBRES de los micrófonos, sin los que
+      // no hay forma de comprobar cuál está puesto.
+      $stat.textContent = 'pidiendo permiso…';
+      try {
+        flujo = await navigator.mediaDevices.getUserMedia({ video: VIDEO, audio: true });
+      } catch (e) {
+        // Un equipo sin micrófono, o con el micrófono bloqueado, no puede quedarse
+        // además sin ojos: se reintenta pidiendo solo vídeo.
+        flujo = await navigator.mediaDevices.getUserMedia({ video: VIDEO, audio: false });
+      }
+      flujo.getAudioTracks().forEach(t => { t.stop(); flujo.removeTrack(t); });
+      camaras = await camarasVisibles();
     }
+
+    // 2) Bajar por la lista hasta que una se deje abrir de verdad.
+    const orden = ordenarCamaras(camaras);
+    const puesta = flujo && flujo.getVideoTracks()[0].getSettings().deviceId;
+    let quiero = orden[0];
+
+    if (!puesta || !orden[0] || puesta !== orden[0].deviceId) {
+      // Windows no deja abrir la misma webcam dos veces, así que se suelta la
+      // anterior ANTES de pedir ninguna.
+      if (flujo) flujo.getTracks().forEach(t => t.stop());
+      flujo = null;
+      quiero = null;
+      for (const cam of orden) {
+        try {
+          flujo = await abrirCamara(cam);
+          quiero = cam;
+          break;
+        } catch (e) {
+          // Una fantasma da NotReadableError o NotFoundError y no pasa nada: se
+          // sigue con la siguiente. Esto es lo que separa la webcam de verdad de
+          // las tres entradas muertas que Windows arrastra.
+          console.warn('Descarto "' + (cam.label || cam.deviceId) + '":', e.name);
+        }
+      }
+      if (!flujo) throw new Error('ninguna de las ' + orden.length
+        + ' cámaras de la lista se deja abrir');
+    }
+
+    // Se quería la USB y ha acabado abriendo la del portátil: en una sala eso
+    // significa que la obra mira a la pared, así que se dice bien claro.
+    if (esIntegrada(quiero) && !/^(integrada|\d+)$/.test((CFG.CAMARA || '').trim().toLowerCase())) {
+      console.warn('Acabé en la cámara integrada:', quiero.label);
+      avisoCamara = 'No pude abrir la cámara USB: uso la integrada. ¿Está enchufada?';
+    }
+    avisoMicro = await comprobarMicro(quiero);
+
     const nombre = (flujo.getVideoTracks()[0].label || 'cámara').slice(0, 40);
     $panel.title = 'Cámara: ' + nombre + '  ·  cámbiala con ?cam=<nombre o índice>';
     console.info('Presencia usando:', nombre);
@@ -484,6 +663,10 @@ async function encender() {
   activo = true; anterior = 0;
   $ojo.classList.add('on');
   avisarGuion();
+  // Después de avisarGuion(): los tres comparten rótulo, y lo de los aparatos es
+  // lo que hay que arreglar antes de abrir la sala.
+  const avisos = [avisoCamara, avisoMicro].filter(Boolean);
+  if (avisos.length) invitar(avisos.join('  ·  '), 10000);
   requestAnimationFrame(analizar);
 }
 

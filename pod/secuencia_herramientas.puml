@@ -1,0 +1,97 @@
+@startuml secuencia-herramientas
+title Un turno CON herramientas - el operador trabaja, el personaje habla
+
+skinparam shadowing false
+skinparam sequenceMessageAlign center
+skinparam BoxPadding 8
+
+actor "Visitante" as USER
+participant "Web\n(index.html)" as WEB
+participant "Backend\n(main.py)" as BACK
+database "ChromaDB\n(canon + _exp)" as CHROMA
+
+box "OpenRouter - dos modelos, dos papeles" #E1F5FE
+  participant "Modelo ANALITICO\nEL OPERADOR" as BASE
+  participant "Modelo del PERSONAJE\nLA VOZ" as LORA
+end box
+
+participant "Herramientas\n(archivo, webcam)" as TOOLS
+participant "Voz\n(voz.py: Piper + efectos)" as VOZ
+
+== El visitante pide algo ==
+USER -> WEB : "¿alguien te habia\npreguntado esto antes?"
+WEB -> BACK : POST /api/chat
+
+BACK -> BACK : registro -> coleccion,\nsystem prompt, diales de voz
+BACK -> CHROMA : RAG: canon + vivido
+CHROMA --> BACK : fragmentos relevantes
+
+== PASADA 1 - el operador decide y ejecuta ==
+note over BASE
+  Un modelo DISTINTO del que habla, y de
+  los que saben emitir JSON: el catalogo
+  gratuito esta lleno de modelos agenticos
+  y de codigo, que aqui por fin sirven de
+  algo. El que hace de personaje esta
+  elegido por otra cosa, y mezclando los
+  dos papeles se estropean los dos.
+
+  Aqui SI conviene el razonamiento
+  (reasoning: effort high): nadie lo oye,
+  y decidir que herramienta usar es justo
+  donde ayuda.
+end note
+
+loop hasta 3 vueltas (tope duro: un bucle sin fin es una sala en silencio)
+  BACK -> BASE : mensajes + tools[]\nreasoning: effort high
+  alt el modelo pide una herramienta
+    BASE --> BACK : tool_calls[]
+    BACK -> TOOLS : recordar(consulta) /\ncuantos_han_venido() / ver()
+    TOOLS --> BACK : resultado en crudo
+    BACK -> BACK : lo añade como\nrole: "tool"
+  else ya no hace falta nada mas
+    BASE --> BACK : sin tool_calls -> salir del bucle
+  end
+end
+
+note right of BACK
+  Cada vuelta es una generacion
+  entera. Con dos vueltas te vas
+  a ~20 s hasta la primera
+  palabra: hay que tapar la
+  espera con sonido (rafaga de
+  sintonia) o entregar en
+  diferido.
+end note
+
+== PASADA 2 - el personaje lo cuenta en su voz ==
+BACK -> LORA : system + RAG + mensaje\n+ RESULTADO de la herramienta\nreasoning: effort none
+note over LORA
+  El personaje nunca dice "he consultado
+  la base de datos": dice "otro caminante
+  trajo esa misma pregunta, hace tres
+  lunas". La maquinaria queda invisible,
+  que es de lo que va la obra.
+end note
+
+loop por cada frase generada
+  LORA --> BACK : tokens
+  BACK --> WEB : SSE data: {t}
+  WEB -> BACK : POST /api/voz (esa frase)
+  BACK -> VOZ : sintetizar(texto, androide, lejania)
+  VOZ --> BACK : WAV procesado
+  BACK --> WEB : audio/wav
+  WEB --> USER : suena mientras se genera\nla frase siguiente
+end
+
+== La obra recuerda (en segundo plano) ==
+BACK ->> BASE : destilar el encuentro\n(modelo BASE otra vez)
+note left of BACK
+  El mismo patron que ya usas en
+  memoria.py: la tarea analitica va a
+  su propio modelo, la voz al suyo.
+  Las herramientas no inventan nada
+  nuevo, extienden lo que ya hay.
+end note
+
+@enduml

@@ -1,0 +1,14 @@
+# Claves y configuración local. NUNCA se sube: el repo es público.
+.env
+
+# Voces de Piper: se descargan solas la primera vez (~60-100 MB cada una).
+voces/
+
+# Logs del pod
+pod/*.log
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/

@@ -1,0 +1,107 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Probar la webcam USB</title>
+<style>
+  body { background:#111; color:#ddd; font:15px/1.6 system-ui, sans-serif;
+         margin:0; padding:24px; }
+  h1 { font-size:18px; color:#fff; margin:0 0 16px; }
+  select, button { background:#222; color:#eee; border:1px solid #444; padding:8px 12px;
+                   font:inherit; border-radius:4px; cursor:pointer; }
+  video { display:block; margin-top:16px; width:100%; max-width:640px; background:#000;
+          border:1px solid #333; border-radius:4px; }
+  #estado { margin-top:12px; font:13px/1.5 ui-monospace, Consolas, monospace;
+            white-space:pre-wrap; }
+  .ok  { color:#7ddc7d; }
+  .mal { color:#ff7b6b; }
+</style>
+</head>
+<body>
+<h1>Probar la webcam USB</h1>
+
+<select id="lista"></select>
+<button id="abrir">Abrir</button>
+
+<video id="v" autoplay muted playsinline></video>
+<div id="estado">Pulsa «Abrir» (la primera vez el navegador pedirá permiso).</div>
+
+<script>
+const $lista  = document.getElementById('lista');
+const $v      = document.getElementById('v');
+const $estado = document.getElementById('estado');
+let flujo = null;
+
+function di(txt, clase) {
+  $estado.className = clase || '';
+  $estado.textContent = txt;
+}
+
+function cerrar() {
+  if (flujo) flujo.getTracks().forEach(t => t.stop());
+  flujo = null;
+  $v.srcObject = null;
+}
+
+/** Rellenar el desplegable. Las etiquetas solo aparecen CON permiso concedido. */
+async function listar(seleccionar) {
+  const camaras = (await navigator.mediaDevices.enumerateDevices())
+                    .filter(d => d.kind === 'videoinput');
+  $lista.innerHTML = '';
+  camaras.forEach((c, i) => {
+    const o = document.createElement('option');
+    o.value = c.deviceId;
+    o.textContent = '[' + i + '] ' + (c.label || 'cámara sin nombre (falta permiso)');
+    $lista.appendChild(o);
+  });
+  // Preseleccionar la que NO parece la integrada: es la que queremos probar.
+  const usb = camaras.find(c => c.label && !/integrat|built.?in|internal|chicony/i.test(c.label));
+  if (seleccionar && usb) $lista.value = usb.deviceId;
+  return camaras;
+}
+
+async function abrir() {
+  cerrar();
+  di('abriendo…');
+  const id = $lista.value;
+
+  // Sin permiso aún no hay deviceId que valga: se pide una cualquiera, y con el
+  // permiso ya concedido aparecen los nombres y se vuelve a intentar.
+  if (!id) {
+    try {
+      flujo = await navigator.mediaDevices.getUserMedia({ video: true });
+      cerrar();
+      await listar(true);
+      return abrir();
+    } catch (e) {
+      return di('sin permiso de cámara: ' + e.name + ' — ' + e.message, 'mal');
+    }
+  }
+
+  // Sin pedir resolución: que la cámara entregue su formato nativo. Pedirle uno
+  // concreto es lo que hace fallar a algunas webcams USB baratas.
+  try {
+    flujo = await navigator.mediaDevices.getUserMedia({
+      video: { deviceId: { exact: id } }, audio: false,
+    });
+  } catch (e) {
+    return di('NO abre: ' + e.name + '\n' + e.message
+      + '\n\nSi pone NotReadableError, la tiene cogida otro programa u otra '
+      + 'pestaña. Ciérralos y vuelve a probar.', 'mal');
+  }
+
+  $v.srcObject = flujo;
+  const t = flujo.getVideoTracks()[0];
+  const s = t.getSettings();
+  di('ABIERTA: ' + t.label + '\n'
+     + s.width + 'x' + s.height + ' @ ' + Math.round(s.frameRate || 0) + ' fps', 'ok');
+  await listar(false);   // ya con permiso, los nombres se ven en la lista
+  $lista.value = id;
+}
+
+document.getElementById('abrir').onclick = abrir;
+$lista.onchange = abrir;
+listar(true);
+</script>
+</body>
+</html>

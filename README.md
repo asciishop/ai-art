@@ -262,6 +262,15 @@ relevo el saludo, el micrófono y la detección del giro de cabeza.
 **Oído y voz** son la Web Speech API del navegador: sin servidor y sin claves.
 El botón 🎤 sigue ahí para usarlo a mano.
 
+> 🎙️ **El micrófono hay que elegirlo en Windows, no aquí.** El que sirve es el
+> de la webcam USB —está donde el visitante, mientras que el del portátil queda
+> a un metro y mirando a otro lado—, pero **el reconocimiento de voz del
+> navegador no acepta que se le diga qué micrófono usar**: coge siempre el
+> *predeterminado del sistema*. Se pone una vez en **Configuración › Sonido ›
+> Entrada**. La obra lo comprueba al arrancar (compara el `groupId` del micro
+> con el de la cámara, que es el mismo aparato) y **avisa en el rótulo y en la
+> consola** si está puesto el otro.
+
 **Presencia** ([`web/presencia.js`](web/presencia.js)) es MediaPipe Face
 Landmarker corriendo en WASM dentro de la pestaña. Mide dos cosas:
 
@@ -291,10 +300,15 @@ index.html?cerca=0.6&fov=70&giro=25&vuelta=15&invertir=1
 - `giro` — los grados que exigen el cambio de personaje (por defecto `20`).
 - `poema` — segundos de silencio entre reclamos (por defecto `90`). **`?poema=0`
   lo desactiva** — útil en una prueba, o si la sala tiene mucho paso.
-- `cam` — qué cámara usar. **Por defecto, `integrada`** (la del propio equipo).
-  Alternativas: `?cam=usb` (la primera que no sea la integrada), un trozo del
-  nombre (`?cam=logitech`) o el índice (`?cam=1`). La elección **queda guardada
-  en el navegador**, así que se pone una vez y el kiosco ya arranca con esa.
+- `cam` — qué cámara usar. **Por defecto, `usb`**: la que no sea la integrada del
+  equipo, que es la que está colocada y encuadrada en la sala. No se fía solo del
+  nombre — Windows arrastra **cámaras fantasma** de webcams que estuvieron
+  enchufadas alguna vez (*«USB Camera»*, *«USB2.0 PC CAMERA»*), y suenan más a
+  USB que la buena. Así que la obra ordena las candidatas y **las va abriendo
+  hasta que una responde**: la que abre, existe. Si acaba en la integrada, avisa
+  en el rótulo y en la consola. Alternativas: `?cam=integrada`, un trozo del nombre
+  (`?cam=logitech`) o el índice (`?cam=1`). La elección **queda guardada en el
+  navegador**, así que se pone una vez y el kiosco ya arranca con esa.
   Los nombres detectados se listan en la consola (F12).
 - `mov` — fracción de las **bandas laterales** que debe moverse para lanzar el
   reclamo (por defecto `0.02`). El panel muestra `borde` y `centro` en vivo:

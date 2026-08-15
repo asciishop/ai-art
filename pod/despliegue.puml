@@ -1,5 +1,5 @@
 @startuml plataforma-despliegue
-title Plataforma de personajes artificiales - Diagrama de despliegue
+title Plataforma de personajes artificiales - Despliegue (texto en OpenRouter)
 
 skinparam shadowing false
 skinparam defaultTextAlignment center
@@ -8,85 +8,65 @@ skinparam ranksep 26
 skinparam ArrowFontSize 11
 
 ' ============================================================
-'  0. CONSTRUCCION — ocurre antes, y luego se apaga
-' ============================================================
-node "Pod de entrenamiento\n(efimero: se apaga al terminar)" as TRAINPOD #F3E5F5 {
-  component "tools/train.py\nQLoRA 4-bit (Unsloth)" as TRAIN
-}
-
-node "Portatil de autoria" as LAPTOP #F3E5F5 {
-  artifact "repo plataforma/\n+ los 3 adapter/ entrenados" as REPO
-}
-
-' ============================================================
-'  1. LA SALA — todo lo que pasa delante del visitante
+'  1. LA SALA — un solo equipo, sin GPU
 ' ============================================================
 node "SALA (instalacion fisica)" as SALA #FDF6E3 {
 
   actor "visitante" as USER
 
-  node "Equipo de sala (PC / portatil)" as KIOSCO {
+  node "EQUIPO DE SALA (portatil normal, SIN GPU)" as KIOSCO #E8F5E9 {
 
-    node "Webcam 640x480" as CAM
-    node "Microfono"      as MIC
-    node "Altavoz"        as SPK
+    node "Webcam" as CAM
+    node "Microfono" as MIC
+    node "Altavoz" as SPK
 
-    node "Navegador: Chrome o Edge\nexige HTTPS o localhost" as NAV #E3F2FD {
+    node "Navegador: Chrome o Edge\nen http://localhost:3000" as NAV #E3F2FD {
       component "index.html\nchat + rayos X + cola de audio" as WEB
-      component "presencia.js\nMOVIMIENTO en los bordes -> reclamo\ncercania + giro de cabeza -> conversar" as PRES
+      component "presencia.js\nmovimiento en los bordes -> reclamo\ncercania + giro de cabeza -> conversar" as PRES
       artifact  "vendor/\nMediaPipe WASM 9 MB\nface_landmarker.task 3,7 MB" as MODELCV
       component "Web Speech API\ndictado + vigia de la orden ""para""\nsintesis: solo de RESERVA" as SPEECH
+    }
+
+    node "uvicorn :3000" as UVI {
+      component "backend/main.py\nFastAPI: orquesta el turno" as BACK
+      component "backend/memoria.py\nla memoria que escribe" as MEMO
+      component "backend/voz.py\nPiper + pedalboard (CPU)" as VOZ
+      component "tools/registro.py" as REGC
+      artifact  "web/ servido como estatico" as WEBSRV
+    }
+
+    component "tools/ingest.py\n(se corre UNA vez, antes de abrir)" as INGEST #FFF3CD
+
+    node "Disco" as DISCO {
+      artifact  ".env\nCLAVE de OpenRouter + que modelos usar" as ENV #FFEBEE
+      artifact  "personajes.yaml\nREGISTRO CENTRAL\n+ diales de voz por personaje" as YAML
+      artifact  "personajes/*/system_prompt.md\nAHORA sostiene el personaje EL SOLO" as SYSP
+      artifact  "voces/*.onnx\nmodelos Piper (se bajan solos)" as VOCES
+      database  "vector_store/chroma.sqlite3\ncanon: *_mem\nvivido: *_exp" as CHROMA
+      database  "vector_store/archivo.db\nSQLite: intercambios crudos" as SQLITE
+      artifact  "personajes/*/adapter/\nLoRA entrenados - SIN USAR" as LORAS #EEEEEE
     }
   }
 }
 
-cloud "Reconocimiento de voz\ndel navegador (Google)" as STT #FFEBEE
-
-' La camara y el microfono NO se abren sobre http hacia una IP de red: el
-' navegador exige un origen seguro. El proxy de RunPod es quien da ese HTTPS.
-cloud "Proxy HTTPS de RunPod\n<pod-id>-3000.proxy.runpod.net" as PROXY #E1F5FE
-
 ' ============================================================
-'  2. EL POD — el unico servidor
+'  2. FUERA — lo unico que ya no es local
 ' ============================================================
-node "POD RunPod - GPU >= 20 GB - CUDA >= 12.8" as POD #E8F5E9 {
-
-  node "uvicorn :3000\nUNICO PUERTO EXPUESTO" as UVI {
-    component "backend/main.py\nFastAPI: orquesta el turno" as BACK
-    component "backend/memoria.py\nla memoria que escribe" as MEMO
-    component "backend/voz.py\nPiper + pedalboard (CPU)\nla voz de maquina que transmite" as VOZ
-    component "tools/registro.py" as REGC
-    artifact  "web/ servido como estatico" as WEBSRV
-  }
-
-  component "tools/ingest.py\n(se corre UNA vez, antes de abrir)" as INGEST #FFF3CD
-
-  node "vLLM :8000\nINTERNO - no se expone" as VLLMNODE {
-    component "OpenAI API server\nmulti-LoRA" as VLLM
-    artifact  "Qwen3-8B\n15,3 GiB de pesos en bf16\nrazonamiento DESACTIVADO" as BASE
-  }
-
-  node "Disco del pod (/workspace)" as DISCO {
-    artifact  "personajes/*/adapter/\n3 LoRA, ~100 MB c/u" as LORAS
-    artifact  "voces/*.onnx\nmodelos Piper (se bajan solos)" as VOCES
-    artifact  "personajes.yaml\nREGISTRO CENTRAL\n+ diales de voz por personaje" as YAML
-    artifact  "personajes/*/system_prompt.md" as SYSP
-    database  "vector_store/chroma.sqlite3\ncanon: *_mem\nvivido: *_exp" as CHROMA
-    database  "vector_store/archivo.db\nSQLite: intercambios crudos" as SQLITE
-  }
+cloud "OpenRouter\nAPI compatible OpenAI" as OR #E1F5FE {
+  component "CHAT de los 3 personajes\nnemotron-3.5-lightning:free  (30B/3B)\n-> laguna-s-2.1:free  (118B/8B)\n-> ling-3.0-tiny:free  (7,9B/1,3B)" as ORCHAT
+  component "MEMORIA: destilar el recuerdo\nlfm-2.5-2.6b:free\n-> ling-3.0-tiny:free" as ORMEM
 }
 
-' ============================================================
-'  Despliegue: una sola vez, antes de abrir la sala
-' ============================================================
-TRAIN  ..> REPO   : <<deploy>>\nadapter/ safetensors
-REPO   ..> DISCO  : <<deploy>>\ngit clone en /workspace\n(los adapter/ DEBEN viajar)
-' Las comillas dobles fuerzan monoespaciado y evitan que PlantUML lea el '--'
-' de los flags como marca de tachado.
-INGEST ..> CHROMA : ""--todos --reset""\nindexa el canon
+cloud "Reconocimiento de voz\ndel navegador (Google)" as STT #FFEBEE
 
 ' ============================================================
-'  Runtime: un turno de conversacion
+'  Preparacion: una sola vez
+' ============================================================
+INGEST ..> CHROMA : ""--todos --reset""\nindexa el canon
+ENV ..> BACK      : clave y modelos\n(se lee al arrancar)
+
+' ============================================================
+'  Runtime
 ' ============================================================
 USER --> CAM : pasa de largo,\nse acerca, gira la cabeza
 USER --> MIC : habla, o dice ""para""
@@ -97,58 +77,61 @@ PRES --> MODELCV : carga WASM + modelo
 PRES --> WEB     : borde -> poema al azar\ncerca -> saluda y abre el micro\ngiro -> cambia de guardian
 WEB --> SPEECH   : escuchar() / vigilar()
 MIC --> SPEECH
-SPEECH ..> STT   : HTTPS: audio del visitante\n(UNICA salida a internet)
-WEB --> SPK      : reproduce el WAV del pod,\nfrase a frase
+SPEECH ..> STT   : HTTPS: audio del visitante
+WEB --> SPK      : reproduce el WAV,\nfrase a frase
 
-NAV   --> PROXY : HTTPS\nsin origen seguro no hay\ncamara ni microfono
-PROXY --> UVI   : reenvia al :3000 del pod\nGET /  y  /web/* (html, js, wasm, .task)\nGET /api/personajes  ·  GET /api/voz/estado\nPOST /api/chat -> SSE en streaming\nPOST /api/voz  -> WAV ya procesado
+NAV --> WEBSRV : http://localhost:3000\nGET /  ·  /web/*  ·  /api/*
+WEB --> BACK   : POST /api/chat -> SSE\nPOST /api/voz  -> WAV
 
-BACK --> REGC   : que LoRA, coleccion,\nprompt y diales de voz
+BACK --> REGC   : que coleccion, prompt\ny diales de voz
 REGC --> YAML
 REGC --> SYSP
 BACK --> CHROMA : RAG: canon + vivido
-BACK --> VLLM   : HTTP localhost:8000\nmodel = LoRA del personaje
-VLLM --> BASE
-VLLM --> LORAS  : carga los 3 adaptadores
 BACK --> VOZ    : una frase cada vez
 VOZ --> VOCES   : carga el modelo Piper\ndel personaje
+
+BACK ..> ORCHAT : HTTPS\nmodels[] = cadena de reserva\nreasoning: effort none
 BACK --> MEMO   : al cerrar el turno\n(salvo el poema: recordar=false)
 MEMO --> SQLITE : archiva el intercambio crudo
-MEMO --> VLLM   : destila el recuerdo\n(modelo BASE, sin LoRA)
+MEMO ..> ORMEM  : destila el recuerdo
 MEMO --> CHROMA : guarda el recuerdo en *_exp
 
-note right of VLLMNODE
-  No se expone en RunPod.
-  Solo le habla el backend,
-  que es quien valida que el
-  personaje pedido exista
-  y este activo.
+note bottom of NAV
+  Ya no hace falta el proxy HTTPS de
+  RunPod: 'localhost' cuenta como
+  origen seguro, asi que la camara y
+  el microfono funcionan tal cual.
 end note
 
-note bottom of STT
-  La UNICA salida a internet de
-  toda la obra: el reconocimiento
-  de voz del navegador. Para una
-  sala sin red -o para no ceder el
-  audio- sustituir por
-  faster-whisper en el pod.
+note right of LORAS
+  Los 3 adaptadores entrenados
+  ya NO intervienen: OpenRouter
+  no sabe nada de ellos. Con
+  ellos se fue la capa "Voz /
+  estilo", que ahora sostiene
+  solo el system_prompt.md.
 
-  Lo demas es local: la vision por
-  webcam corre en la pestaña, y la
-  VOZ se sintetiza en el pod. La
-  del navegador solo entra si falta
-  piper o pedalboard, para que la
-  sala nunca se quede muda.
+  No se borran: si algun dia
+  vuelve un vLLM, siguen validos.
+end note
+
+note bottom of OR
+  Lo UNICO que ya no corre en la sala.
+  Dos cadenas de modelos gratuitos: si
+  el primero devuelve 429 -los ':free'
+  comparten capacidad- se prueba el
+  siguiente sin que el visitante lo note.
+
+  Limite: 50 peticiones/dia, o 1.000 si
+  se han comprado $10 alguna vez.
+  Cada turno gasta 2 (chat + memoria).
 end note
 
 note bottom of VOZ
-  La voz del navegador NO se puede
-  procesar: va directa a la tarjeta
-  de sonido y no hay nodo de audio
-  que interceptar. Por eso para que
-  suene a maquina que transmite hay
-  que sintetizar aqui.
-  Es CPU pura, no toca la GPU.
+  Sigue siendo LOCAL y en CPU. Es lo que
+  obliga a tener un equipo en la sala
+  aunque el texto venga de fuera: la voz
+  del navegador no se puede procesar.
 end note
 
 @enduml

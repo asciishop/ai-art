@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<title>Diagnóstico de cámara y micrófono</title>
+<style>
+  body { background:#111; color:#ddd; font:14px/1.5 ui-monospace, Consolas, monospace;
+         margin:0; padding:24px; }
+  h1 { font-size:16px; color:#fff; margin:0 0 4px; }
+  p.sub { color:#888; margin:0 0 20px; }
+  button { background:#2a2a2a; color:#eee; border:1px solid #444; padding:8px 16px;
+           font:inherit; cursor:pointer; border-radius:4px; }
+  button:hover { background:#333; }
+  pre { white-space:pre-wrap; word-break:break-word; margin:16px 0 0; }
+  .ok   { color:#7ddc7d; }
+  .mal  { color:#ff7b6b; }
+  .info { color:#8ab4ff; }
+  video { margin-top:16px; max-width:320px; border:1px solid #444; border-radius:4px;
+          display:none; }
+  video.ver { display:block; }
+</style>
+</head>
+<body>
+<h1>Diagnóstico de cámara y micrófono</h1>
+<p class="sub">Prueba cada combinación por separado para ver cuál acepta el driver.
+   Cierra cualquier otra pestaña o programa que use la webcam antes de empezar.</p>
+<button id="ir">Probar</button>
+<pre id="log"></pre>
+<video id="v" muted playsinline></video>
+
+<script>
+const $log = document.getElementById('log');
+const $v = document.getElementById('v');
+
+function linea(txt, clase) {
+  const s = document.createElement('span');
+  s.className = clase || '';
+  s.textContent = txt + '\n';
+  $log.appendChild(s);
+}
+
+/** Abrir y cerrar enseguida: aquí solo interesa SI abre y con qué formato. */
+async function probar(etiqueta, peticion) {
+  let flujo = null;
+  try {
+    flujo = await navigator.mediaDevices.getUserMedia(peticion);
+    const t = flujo.getVideoTracks()[0];
+    const s = t ? t.getSettings() : {};
+    linea('  OK   ' + etiqueta + '  →  ' + (t ? t.label : '?')
+          + '  ' + (s.width || '?') + 'x' + (s.height || '?')
+          + ' @' + (s.frameRate ? Math.round(s.frameRate) : '?') + 'fps', 'ok');
+    return flujo;
+  } catch (e) {
+    linea('  FALLA ' + etiqueta + '  →  ' + e.name + ': ' + e.message, 'mal');
+    if (flujo) flujo.getTracks().forEach(t => t.stop());
+    return null;
+  }
+}
+
+function cerrar(flujo) {
+  if (flujo) flujo.getTracks().forEach(t => t.stop());
+}
+
+document.getElementById('ir').onclick = async () => {
+  $log.textContent = '';
+  $v.classList.remove('ver');
+
+  // 1) Permiso primero: sin él las etiquetas vienen vacías y no se distingue nada.
+  linea('== Permiso ==', 'info');
+  let permiso = null;
+  try {
+    permiso = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
+    linea('  concedidos cámara y micrófono', 'ok');
+  } catch (e) {
+    linea('  con audio falla (' + e.name + '), pruebo solo vídeo', 'mal');
+    try {
+      permiso = await navigator.mediaDevices.getUserMedia({ video: true });
+      linea('  concedida la cámara (el micrófono no)', 'ok');
+    } catch (e2) {
+      linea('  NO hay permiso de cámara: ' + e2.name + ' — no se puede seguir', 'mal');
+      return;
+    }
+  }
+  const dioPorDefecto = permiso.getVideoTracks()[0].label;
+  cerrar(permiso);   // soltar antes de probar nada más
+  await new Promise(r => setTimeout(r, 500));
+
+  // 2) Qué aparatos hay.
+  const disp = await navigator.mediaDevices.enumerateDevices();
+  const camaras = disp.filter(d => d.kind === 'videoinput');
+  const micros  = disp.filter(d => d.kind === 'audioinput');
+
+  linea('\n== Cámaras ==', 'info');
+  camaras.forEach((c, i) => linea('  [' + i + '] ' + c.label
+    + '\n        deviceId=' + c.deviceId.slice(0, 24) + '…  groupId=' + c.groupId.slice(0, 12) + '…'));
+  linea('  la que da el navegador por defecto: ' + dioPorDefecto);
+
+  linea('\n== Micrófonos ==', 'info');
+  micros.forEach((m, i) => linea('  [' + i + '] ' + (m.deviceId === 'default' ? '(PREDETERMINADO) ' : '')
+    + m.label + '\n        groupId=' + m.groupId.slice(0, 12) + '…'));
+
+  // 3) La prueba de verdad: cada restricción por separado, sobre CADA cámara.
+  //    Así se ve si el problema es la cámara o es el formato que se le pide.
+  for (const cam of camaras) {
+    linea('\n== ' + cam.label + ' ==', 'info');
+    const id = { deviceId: { exact: cam.deviceId } };
+    const casos = [
+      ['solo deviceId          ', { video: id }],
+      ['deviceId + 640x480     ', { video: { ...id, width: 640, height: 480 } }],
+      ['deviceId + 1280x720    ', { video: { ...id, width: 1280, height: 720 } }],
+      ['deviceId + 1920x1080   ', { video: { ...id, width: 1920, height: 1080 } }],
+      ['deviceId ideal (no exact)', { video: { deviceId: cam.deviceId } }],
+    ];
+    for (const [etiqueta, peticion] of casos) {
+      const f = await probar(etiqueta, peticion);
+      if (f) {
+        // Si abre, se enseña un segundo: que se vea que hay imagen de verdad y
+        // no un rectángulo negro, que también pasa con algunos drivers.
+        $v.srcObject = f;
+        $v.classList.add('ver');
+        try { await $v.play(); } catch (e) {}
+        await new Promise(r => setTimeout(r, 1200));
+        $v.srcObject = null;
+        cerrar(f);
+      }
+      // Pausa entre intentos: Windows tarda en soltar un dispositivo USB, y sin
+      // esto el intento siguiente falla por culpa del anterior, no por sí mismo.
+      await new Promise(r => setTimeout(r, 700));
+    }
+  }
+
+  linea('\n== Fin ==', 'info');
+  linea('Copia todo esto tal cual.');
+};
+</script>
+</body>
+</html>

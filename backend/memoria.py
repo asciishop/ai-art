@@ -27,8 +27,11 @@ _chroma = None
 _ef = None
 _vllm_url = None
 _headers = {}
-_modelo_base = "Qwen/Qwen3-8B"
+# Campo 'model' (o 'models', si es una cadena de reserva) ya construido por
+# main.py. Se guarda hecho para no repetir aquí la lógica de las comas.
+_campo_modelo = {"model": "Qwen/Qwen3-8B"}
 _sqlite_path = None
+_local = True           # ¿el endpoint analítico es nuestro vLLM? (ver init)
 _cols_exp = {}          # cache de colecciones _exp
 
 # Umbrales de curaduría
@@ -39,15 +42,22 @@ DEDUP = 0.12            # si un recuerdo nuevo está más cerca que esto de uno
 CIERRA_PENSAMIENTO = "</think>"
 
 
-def init(chroma, ef, vllm_url, headers, modelo_base, sqlite_path):
-    """Configura el módulo y crea la tabla del archivo si no existe."""
-    global _chroma, _ef, _vllm_url, _headers, _modelo_base, _sqlite_path
+def init(chroma, ef, vllm_url, headers, campo_modelo, sqlite_path, local=True):
+    """Configura el módulo y crea la tabla del archivo si no existe.
+
+    'local' distingue si al otro lado hay un vLLM nuestro o un proveedor
+    externo (OpenRouter y similares). Solo cambia una cosa, pero rompería la
+    llamada: 'chat_template_kwargs' es una extensión de vLLM, y un proveedor
+    externo puede rechazar la petición entera por campo desconocido.
+    """
+    global _chroma, _ef, _vllm_url, _headers, _campo_modelo, _sqlite_path, _local
     _chroma = chroma
     _ef = ef
     _vllm_url = vllm_url
     _headers = headers or {}
-    _modelo_base = modelo_base
+    _campo_modelo = campo_modelo
     _sqlite_path = sqlite_path
+    _local = local
 
     con = sqlite3.connect(_sqlite_path)
     con.execute("""
@@ -100,7 +110,9 @@ async def distilar(pregunta: str, respuesta: str) -> str:
         "EXACTAMENTE la palabra: NADA"
     )
     payload = {
-        "model": _modelo_base,          # modelo base, no el LoRA: tarea analítica
+        # Modelo analítico, NO el LoRA del personaje: esto es un juicio, no una
+        # interpretación. Puede ser una cadena de reserva ({"models": [...]}).
+        **_campo_modelo,
         "messages": [
             {"role": "system", "content": sistema},
             {"role": "user", "content": f'Persona: "{pregunta}"\nRespuesta: "{respuesta}"'},
@@ -108,11 +120,14 @@ async def distilar(pregunta: str, respuesta: str) -> str:
         "stream": False,
         "temperature": 0.3,
         "max_tokens": 60,
+    }
+    if _local:
         # Sin razonamiento: aquí el modelo tiene que contestar UNA frase (o la
         # palabra NADA). Si Qwen3 abriera su <think>, se comería los 60 tokens
         # pensando y la respuesta llegaría cortada a la mitad del razonamiento.
-        "chat_template_kwargs": {"enable_thinking": False},
-    }
+        # Solo se manda a un vLLM nuestro: es una extensión suya, y un proveedor
+        # externo puede devolver 400 por campo desconocido.
+        payload["chat_template_kwargs"] = {"enable_thinking": False}
     try:
         async with httpx.AsyncClient(timeout=60) as client:
             r = await client.post(_vllm_url, json=payload, headers=_headers)
