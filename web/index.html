@@ -141,7 +141,17 @@
   #escena[data-vista="ambos"] ~ #presencia,
   #escena[data-vista="xray"]  ~ #presencia { left:16px; right:auto; }
   #presencia.cerca { border-color:var(--acc); }
-  #cam { display:block; width:100%; height:auto; transform:scaleX(-1); opacity:.75; }
+  /* El vídeo NO se enseña. En la sala, una pantalla que te devuelve tu propia
+     cara se lleva la atención que era para la obra, y además da a entender que
+     algo te está grabando — justo lo contrario de lo que pasa.
+     Se deja de 1 píxel y transparente en vez de display:none A PROPÓSITO: el
+     análisis LEE los fotogramas de este elemento, y un vídeo que el navegador
+     no pinta puede dejar de entregarlos. La obra se quedaría ciega sin avisar.
+     Con ?video=1 vuelve a verse, que el día del montaje hay que encuadrar. */
+  #cam { position:absolute; top:0; left:0; width:1px; height:1px;
+         opacity:0; pointer-events:none; }
+  #presencia.convideo #cam { position:static; width:100%; height:auto;
+                             opacity:.75; transform:scaleX(-1); }
   #pstat { padding:5px 8px; font-size:10.5px; color:var(--dim); background:var(--panel);
            font-family:ui-monospace,Consolas,monospace; white-space:pre-line; line-height:1.4; }
   #presencia.cerca #pstat { color:var(--txt); }

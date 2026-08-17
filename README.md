@@ -277,7 +277,7 @@ Landmarker corriendo en WASM dentro de la pestaña. Mide dos cosas:
 | Qué | Cómo | Para qué |
 |---|---|---|
 | **Distancia** | El ancho aparente de la cara contra el modelo de cámara estenopeica | Por debajo de 0,5 m, invita |
-| **Giro de cabeza** | La pose 3D que devuelve el propio modelo | A partir de **20°**: de frente **Zinc**, a su derecha **VA 91**, a su izquierda **Ucron** |
+| **Giro de cabeza** | La pose 3D que devuelve el propio modelo | A partir de **15°**: de frente **Zinc**, a su derecha **VA 91**, a su izquierda **Ucron** |
 
 > 🔒 **El vídeo no sale de la pestaña.** No se graba, no se sube y no se
 > guarda un solo fotograma: el modelo y el WASM se sirven desde `web/vendor/`,
@@ -297,7 +297,8 @@ index.html?cerca=0.6&fov=70&giro=25&vuelta=15&invertir=1
 - `fov` — el campo de visión de tu webcam en grados (por defecto `60`). **Es el
   dial que más corrige la distancia**: si todas las lecturas salen cortas o
   largas por igual, es este.
-- `giro` — los grados que exigen el cambio de personaje (por defecto `20`).
+- `giro` — los grados que exigen el cambio de personaje (por defecto `15`). Si lo
+  cambias, mueve `vuelta` con él (ver abajo): van en pareja.
 - `poema` — segundos de silencio entre reclamos (por defecto `90`). **`?poema=0`
   lo desactiva** — útil en una prueba, o si la sala tiene mucho paso.
 - `cam` — qué cámara usar. **Por defecto, `usb`**: la que no sea la integrada del
@@ -315,10 +316,14 @@ index.html?cerca=0.6&fov=70&giro=25&vuelta=15&invertir=1
   míralos con la sala vacía (los dos cerca de 0) y con alguien cruzando por un
   lado (`borde` debe dispararse y `centro` quedarse bajo).
 - `vuelta` — los grados por debajo de los cuales se suelta ese lado y se
-  regresa al personaje frontal (por defecto `12`). **Tiene que ser menor que
-  `giro`**: esa banda muerta es lo que evita que el personaje salte solo
-  mientras alguien habla girando la cabeza.
+  regresa al personaje frontal (por defecto `9`). **Tiene que ser bastante menor
+  que `giro`** — unos dos tercios va bien: esa banda muerta es lo que evita que
+  el personaje salte solo mientras alguien habla girando la cabeza.
 - `invertir=1` — si la derecha y la izquierda salen cambiadas.
+- `video=1` — **enseña la imagen de la webcam** dentro del visor. Normalmente el
+  visor muestra solo los números: en la sala, una pantalla devolviéndole la cara
+  al visitante distrae de la obra y sugiere que le están grabando. Para encuadrar
+  la cámara el día del montaje, enciéndelo.
 
 La distancia es una **estimación**, no una medida: la anchura de una cara varía
 entre personas (±15 %) y cada webcam tiene su óptica. Para distinguir "pegado"

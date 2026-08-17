@@ -6,7 +6,7 @@
  *   ¿HAY ALGUIEN CERCA?   A menos de 0,5 m la obra saluda en voz alta y abre
  *                         el micrófono sola. El visitante no toca nada.
  *   ¿HACIA DÓNDE MIRA?    De frente responde Zinc. Si gira la cabeza a su
- *                         derecha 20° o más, VA 91. A su izquierda, Ucron.
+ *                         derecha 15° o más, VA 91. A su izquierda, Ucron.
  *
  * El vídeo NO se graba ni se envía a ningún sitio: MediaPipe corre en WASM
  * dentro del navegador y los ficheros están servidos desde web/vendor/. Sin
@@ -33,11 +33,14 @@ const CFG = {
                      // límite encendería y apagaría la obra sin parar)
   ENTRAR_MS:   600,  // hay que sostener la cercanía este rato (no un cruce)
   SALIR_MS:   2500,  // y la ausencia este otro (no un giro momentáneo)
-  GIRO_GRADOS:  20,  // girar la cabeza esto (a un lado u otro) cambia de personaje
-  VUELTA_GRADOS: 12, // y hay que volver POR DEBAJO de esto para soltar ese lado.
-                     // Es la misma histéresis que CERCA_M/LEJOS_M, y a 20° hace
-                     // falta: hablando se gira la cabeza sin querer, y sin este
-                     // margen los personajes se turnarían solos en el borde.
+  GIRO_GRADOS:  15,  // girar la cabeza esto (a un lado u otro) cambia de personaje
+  VUELTA_GRADOS:  9, // y hay que volver POR DEBAJO de esto para soltar ese lado.
+                     // Es la misma histéresis que CERCA_M/LEJOS_M, y hace falta:
+                     // hablando se gira la cabeza sin querer, y sin este margen
+                     // los personajes se turnarían solos en el borde. Va atado a
+                     // GIRO_GRADOS —unos dos tercios—, así que si bajas uno baja
+                     // el otro: dejarlo alto estrecha la banda muerta y vuelve
+                     // el temblor que este umbral existe para evitar.
   MIRADA_MS:  1000,  // sostenido, para que un vistazo no cambie de personaje
   // EL RECLAMO. No lo dispara una cara, sino MOVIMIENTO: quien pasa de largo
   // va de perfil, de espaldas o demasiado lejos para que el detector de caras
@@ -108,6 +111,9 @@ const SIEN_DER = 234, SIEN_IZQ = 454;   // los extremos del óvalo de la cara
 
 const $ojo   = document.getElementById('ojo');
 const $panel = document.getElementById('presencia');
+// El visor enseña SOLO los números. La imagen de la webcam se pide aparte, con
+// ?video=1, y es cosa del montaje: encuadrar la cámara sin verla es imposible.
+if (url.get('video') === '1') $panel.classList.add('convideo');
 const $cam   = document.getElementById('cam');
 const $stat  = document.getElementById('pstat');
 const $inv   = document.getElementById('invita');
@@ -291,7 +297,7 @@ function cambia(zona) {
   window.Sala.cortarEscucha();   // lo dictado era para el otro personaje
   zonaFirme = zona;
   window.Sala.elegir(id, true);  // 'discreto': sin saludo escrito
-  // Rótulo corto: con el umbral en 20° los relevos son frecuentes y un cartel
+  // Rótulo corto: con el umbral en 15° los relevos son frecuentes y un cartel
   // de seis segundos estaría casi siempre encima.
   invitar('Te escucha ' + window.Sala.nombre(id).split('—')[0].trim(), 2200);
   // Sin dejarleHablar(): no hay nada que suene, así que el micrófono puede
